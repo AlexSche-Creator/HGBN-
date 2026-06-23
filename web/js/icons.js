@@ -1,0 +1,85 @@
+// Минималистичные линейные SVG-иконки. Палитра наследуется через currentColor.
+const PATHS = {
+  home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
+  calendar: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>',
+  stats: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
+  // статусы дня
+  'sun.max': '<circle cx="12" cy="12" r="4.5"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3M4 4l2 2M18 18l2 2M20 4l-2 2M6 18l-2 2"/>',
+  'cloud.sun': '<circle cx="8" cy="8" r="3"/><path d="M8 1v2M2 8h2M3.5 3.5l1.3 1.3"/><path d="M9 18h8a3.5 3.5 0 0 0 0-7 5 5 0 0 0-9.5 1.5A3 3 0 0 0 8 18z"/>',
+  cloud: '<path d="M7 18h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.5 3.5 0 0 0 6 18z"/>',
+  'cloud.rain': '<path d="M7 15h9a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.5 3.5 0 0 0 6 15z"/><path d="M8 19l-1 2M12 19l-1 2M16 19l-1 2"/>',
+  'cloud.bolt': '<path d="M7 14h9a4 4 0 0 0 0-8 6 6 0 0 0-11.5 1.5A3.5 3.5 0 0 0 6 14z"/><path d="M13 14l-3 4h3l-2 3"/>',
+  // действия
+  play: '<circle cx="12" cy="12" r="9"/><path d="M10 9l5 3-5 3z" fill="currentColor" stroke="none"/>',
+  stop: '<circle cx="12" cy="12" r="9"/><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  wind: '<path d="M3 8h11a3 3 0 1 0-3-3M3 16h15a3 3 0 1 1-3 3M3 12h8"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  gauge: '<path d="M12 13l4-4"/><path d="M4 18a8 8 0 1 1 16 0"/>',
+  number: '<path d="M5 8h14M5 16h14M9 4l-1 16M16 4l-1 16"/>',
+  'chevron.left': '<path d="M15 5l-7 7 7 7"/>',
+  'chevron.right': '<path d="M9 5l7 7-7 7"/>',
+  eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  'eye.slash': '<path d="M3 3l18 18M10.6 10.6a3 3 0 0 0 4 4M9.9 5.2A9.8 9.8 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3.2 3.8M6.1 6.1A17 17 0 0 0 2 12s4 7 10 7a9.6 9.6 0 0 0 2.1-.2"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+  export: '<path d="M12 16V4M8 8l4-4 4 4M5 20h14"/>',
+  sliders: '<path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/>',
+  merge: '<path d="M7 21V9M7 9l-3 3M7 9l3 3M17 21v-6a4 4 0 0 0-4-4H7"/>',
+  timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/>',
+  drag: '<path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"/>',
+  hand: '<path d="M7 11V6a2 2 0 0 1 4 0v5M11 11V4a2 2 0 0 1 4 0v7M15 11V6a2 2 0 0 1 4 0v8a6 6 0 0 1-6 6h-2a6 6 0 0 1-5-3l-2-3"/>',
+  // причины (упрощённый набор, остальное → точка)
+  moon: '<path d="M20 14a8 8 0 1 1-10-10 6 6 0 0 0 10 10z"/>',
+  desktop: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  phone: '<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/>',
+  bolt: '<path d="M13 2L4 14h7l-2 8 9-12h-7z"/>',
+  food: '<path d="M5 2v8a2 2 0 0 0 4 0V2M7 2v20M16 2c-1.5 1.5-2 4-2 6s.5 4 2 5v9"/>',
+  light: '<circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
+  chair: '<path d="M6 4v8h12V4M6 12l-1 8M18 12l1 8M5 16h14"/>',
+  question: '<path d="M9 9a3 3 0 1 1 4 2.8c-.8.4-1 .8-1 1.7M12 17h.01"/>',
+  briefcase: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>',
+  heart: '<path d="M12 20s-7-4.5-9.5-9A4.5 4.5 0 0 1 12 6a4.5 4.5 0 0 1 9.5 5c-2.5 4.5-9.5 9-9.5 9z"/>',
+  people: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 6a3 3 0 0 1 0 6M21 20a6 6 0 0 0-3-5.2"/>',
+  battery: '<rect x="2" y="8" width="16" height="9" rx="2"/><path d="M20 11v3"/><rect x="4" y="10" width="4" height="5" fill="currentColor" stroke="none"/>',
+  card: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>',
+  stack: '<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5M3 16l9 5 9-5"/>',
+  hourglass: '<path d="M6 2h12M6 22h12M8 2c0 5 8 5 8 10s-8 5-8 10M16 2c0 5-8 5-8 10s8 5 8 10"/>',
+  chat: '<path d="M4 5h16v11H9l-4 4z"/>',
+  reset: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 4v4h4"/>',
+  check: '<path d="M5 13l4 4L19 7"/>',
+  dot: '<circle cx="12" cy="12" r="3.5"/>',
+};
+
+const ALIASES = {
+  desktopcomputer: 'desktop',
+  iphone: 'phone',
+  'fork.knife': 'food',
+  'takeoutbag.and.cup.and.straw': 'food',
+  'sun.max': 'sun.max',
+  'gauge.high': 'gauge',
+  'gauge.medium': 'gauge',
+  'moon.zzz': 'moon',
+  creditcard: 'card',
+  'square.stack.3d.up': 'stack',
+  'person.2': 'people',
+  'bubble.left.and.bubble.right': 'chat',
+  'battery.25': 'battery',
+  'arrow.triangle.merge': 'merge',
+  'slider.horizontal.3': 'sliders',
+  'hand.tap': 'hand',
+  'tablecells': 'export',
+  circle: 'dot',
+  'waveform.path': 'gauge',
+};
+
+export function icon(name, cls = '') {
+  const key = PATHS[name] ? name : (ALIASES[name] || 'dot');
+  const inner = PATHS[key] || PATHS.dot;
+  return `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${inner}</svg>`;
+}
+
+export const ICON_CHOICES = [
+  'dot', 'moon', 'desktop', 'phone', 'bolt', 'food', 'light', 'chair', 'question',
+  'briefcase', 'calendar', 'heart', 'people', 'battery', 'card', 'stack', 'hourglass', 'chat', 'clock', 'wind',
+];

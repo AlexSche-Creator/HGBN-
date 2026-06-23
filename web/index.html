@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <title>HGBN — дневник самонаблюдения</title>
+
+  <meta name="description" content="Быстрая фиксация эпизодов напряжения и тревоги, статистика и самонаблюдение." />
+  <meta name="theme-color" content="#0ABAB5" />
+
+  <!-- iOS standalone PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="HGBN" />
+
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icons/icon-32.png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="./icons/icon-180.png" />
+  <link rel="apple-touch-icon" sizes="167x167" href="./icons/icon-167.png" />
+  <link rel="apple-touch-icon" sizes="152x152" href="./icons/icon-152.png" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <main id="view" class="view"></main>
+
+    <nav class="tabbar" id="tabbar">
+      <button class="tab" data-tab="home" aria-label="Сегодня">
+        <span class="tab-icon" data-icon="home"></span><span class="tab-label">Сегодня</span>
+      </button>
+      <button class="tab" data-tab="calendar" aria-label="Календарь">
+        <span class="tab-icon" data-icon="calendar"></span><span class="tab-label">Календарь</span>
+      </button>
+      <button class="tab" data-tab="stats" aria-label="Статистика">
+        <span class="tab-icon" data-icon="stats"></span><span class="tab-label">Статистика</span>
+      </button>
+      <button class="tab" data-tab="settings" aria-label="Настройки">
+        <span class="tab-icon" data-icon="settings"></span><span class="tab-label">Настройки</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Контейнер для модальных листов -->
+  <div id="sheet-root"></div>
+
+  <script type="module" src="./js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>

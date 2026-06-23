@@ -1,0 +1,201 @@
+import { DEFAULT_SETTINGS, DEFAULT_THRESHOLDS, defaultReasons, reasonMatches } from './defaults.js';
+import { calculateDay, dayKey, startOfDay, episodeDuration, recordDuration } from './calculator.js';
+
+const KEY = 'hgbn.data.v1';
+
+function uid() {
+  return (crypto.randomUUID && crypto.randomUUID()) ||
+    'id-' + Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+function defaultData() {
+  return {
+    reasons: defaultReasons(uid),
+    episodes: [],
+    anxiety: [],
+    overrides: {}, // dayKey -> { status, comment }
+    settings: structuredClone(DEFAULT_SETTINGS),
+  };
+}
+
+class Store {
+  constructor() {
+    this.subs = new Set();
+    this.load();
+  }
+
+  load() {
+    try {
+      const raw = localStorage.getItem(KEY);
+      this.data = raw ? JSON.parse(raw) : defaultData();
+    } catch {
+      this.data = defaultData();
+    }
+    // Миграции / целостность настроек.
+    this.data.settings = { ...DEFAULT_SETTINGS, ...(this.data.settings || {}) };
+    this.data.settings.thresholds = { ...DEFAULT_THRESHOLDS, ...(this.data.settings.thresholds || {}) };
+    this.data.overrides = this.data.overrides || {};
+    if (!this.data.reasons || !this.data.reasons.length) this.data.reasons = defaultReasons(uid);
+    this.applyTheme();
+  }
+
+  save() {
+    localStorage.setItem(KEY, JSON.stringify(this.data));
+  }
+
+  // Сохранить + уведомить подписчиков (мгновенно, синхронно).
+  commit() {
+    this.save();
+    this.emit();
+  }
+
+  subscribe(fn) { this.subs.add(fn); return () => this.subs.delete(fn); }
+  emit() { this.subs.forEach((fn) => fn()); }
+
+  uid() { return uid(); }
+
+  // --- Настройки ---
+  get settings() { return this.data.settings; }
+  get thresholds() { return this.data.settings.thresholds; }
+
+  setSetting(key, value) { this.data.settings[key] = value; if (key === 'theme') this.applyTheme(); this.commit(); }
+  setThreshold(key, value) { this.data.settings.thresholds[key] = value; this.commit(); }
+  resetThresholds() { this.data.settings.thresholds = { ...DEFAULT_THRESHOLDS }; this.commit(); }
+
+  applyTheme() {
+    const t = this.data.settings.theme;
+    const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  }
+
+  // --- Причины ---
+  reasons(activeOnly = false) {
+    const list = [...this.data.reasons].sort((a, b) => a.sortOrder - b.sortOrder);
+    return activeOnly ? list.filter((r) => r.isActive) : list;
+  }
+  reasonsFor(episodeType) {
+    return this.reasons(true).filter((r) => reasonMatches(r.type, episodeType));
+  }
+  reasonsByFilter(filter) {
+    // filter: 'headache' | 'anxiety'
+    return this.reasons().filter((r) =>
+      filter === 'headache' ? r.type !== 'anxietyReason' : r.type !== 'headacheReason');
+  }
+  reasonTitle(id) { return this.data.reasons.find((r) => r.id === id)?.title; }
+
+  addReason(title, type) {
+    const maxOrder = this.data.reasons.reduce((m, r) => Math.max(m, r.sortOrder), 0);
+    this.data.reasons.push({
+      id: uid(), title, type, iconName: 'dot',
+      isDefault: false, isActive: true, sortOrder: maxOrder + 1, createdAt: new Date().toISOString(),
+    });
+    this.commit();
+  }
+  updateReason(id, patch) {
+    const r = this.data.reasons.find((x) => x.id === id);
+    if (r) { Object.assign(r, patch); this.commit(); }
+  }
+  deleteReason(id) {
+    this.data.reasons = this.data.reasons.filter((r) => r.id !== id);
+    this.commit();
+  }
+  swapReasonOrder(idA, idB) {
+    const a = this.data.reasons.find((r) => r.id === idA);
+    const b = this.data.reasons.find((r) => r.id === idB);
+    if (!a || !b) return;
+    const tmp = a.sortOrder; a.sortOrder = b.sortOrder; b.sortOrder = tmp;
+    this.commit();
+  }
+
+  // --- Эпизоды ---
+  get episodes() { return this.data.episodes; }
+  activeEpisode() { return this.data.episodes.find((e) => !e.endTime); }
+  episodesOn(date) {
+    const k = dayKey(date);
+    return this.data.episodes
+      .filter((e) => dayKey(e.startTime) === k)
+      .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+  }
+
+  startEpisode() {
+    const now = new Date().toISOString();
+    this.data.episodes.push({
+      id: uid(), startTime: now, endTime: null, manualDurationMinutes: null,
+      intensity: 3, type: 'headache', reasonIDs: [], customReasonText: null, notes: null,
+      dayLongFlag: 'none', createdAt: now, updatedAt: now,
+    });
+    this.commit();
+  }
+  finishEpisodeNow(id) {
+    const e = this.data.episodes.find((x) => x.id === id);
+    if (e) { e.endTime = new Date().toISOString(); e.updatedAt = e.endTime; this.commit(); }
+    return e;
+  }
+  upsertEpisode(ep) {
+    const i = this.data.episodes.findIndex((x) => x.id === ep.id);
+    ep.updatedAt = new Date().toISOString();
+    if (i >= 0) this.data.episodes[i] = ep; else this.data.episodes.push(ep);
+    this.commit();
+  }
+  deleteEpisode(id) {
+    this.data.episodes = this.data.episodes.filter((e) => e.id !== id);
+    this.commit();
+  }
+
+  // --- Тревога ---
+  get anxiety() { return this.data.anxiety; }
+  activeAnxiety() { return this.data.anxiety.find((a) => !a.endTime); }
+  anxietyOn(date) {
+    const k = dayKey(date);
+    return this.data.anxiety
+      .filter((a) => dayKey(a.startTime) === k)
+      .sort((x, y) => new Date(x.startTime) - new Date(y.startTime));
+  }
+  upsertAnxiety(rec) {
+    const i = this.data.anxiety.findIndex((x) => x.id === rec.id);
+    rec.updatedAt = new Date().toISOString();
+    if (i >= 0) this.data.anxiety[i] = rec; else this.data.anxiety.push(rec);
+    this.commit();
+  }
+  deleteAnxiety(id) {
+    this.data.anxiety = this.data.anxiety.filter((a) => a.id !== id);
+    this.commit();
+  }
+
+  // --- Расчёт дня ---
+  computeDay(date) {
+    const eps = this.episodesOn(date).filter((e) => e.endTime).map((e) => ({
+      intensity: e.intensity,
+      durationMinutes: episodeDuration(e),
+      isDayLong: (e.dayLongFlag || 'none') !== 'none',
+    }));
+    const anx = this.anxietyOn(date).filter((a) => a.endTime).map((a) => ({ intensity: a.intensity }));
+    const k = dayKey(date);
+    const ov = this.data.overrides[k];
+    const override = ov && ov.status ? ov.status : null;
+    return calculateDay(eps, anx, override, this.thresholds);
+  }
+  isOverridden(date) { return !!this.data.overrides[dayKey(date)]?.status; }
+  setOverride(date, status) {
+    const k = dayKey(date);
+    if (status) this.data.overrides[k] = { ...(this.data.overrides[k] || {}), status };
+    else if (this.data.overrides[k]) delete this.data.overrides[k].status;
+    this.commit();
+  }
+
+  // --- Сброс ---
+  resetEntries() {
+    this.data.episodes = [];
+    this.data.anxiety = [];
+    this.data.overrides = {};
+    this.commit();
+  }
+  resetAll() {
+    this.data = defaultData();
+    this.applyTheme();
+    this.commit();
+  }
+}
+
+export const store = new Store();
+export { episodeDuration, recordDuration };
