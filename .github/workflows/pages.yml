@@ -32,6 +32,10 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # Включить GitHub Pages автоматически (источник — GitHub Actions),
+          # если он ещё не включён в настройках репозитория.
+          enablement: true
 
       - name: Upload web/ artifact
         uses: actions/upload-pages-artifact@v3
