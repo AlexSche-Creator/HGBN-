@@ -96,3 +96,77 @@ export function reasonMatches(reasonType, episodeType) {
   if (reasonType === 'anxietyReason') return episodeType === 'anxiety' || episodeType === 'mixed';
   return false;
 }
+
+// ---------- Здоровье v2: давление, лекарства, ощущения ----------
+
+// Классы препаратов (для группировки, без медицинских рекомендаций).
+export const MED_CLASSES = [
+  ['antidepressant_ssri', 'Антидепрессант (СИОЗС)'],
+  ['antidepressant_snri', 'Антидепрессант (СИОЗСН)'],
+  ['anxiolytic', 'Анксиолитик'],
+  ['muscle_relaxant', 'Миорелаксант'],
+  ['nsaid', 'НПВС / анальгетик'],
+  ['nootropic', 'Ноотроп'],
+  ['betablocker', 'Бета-блокатор'],
+  ['antihypertensive', 'Гипотензивное'],
+  ['sleep', 'Для сна'],
+  ['magnesium_b', 'Магний / витамины B'],
+  ['supplement', 'БАД / добавка'],
+  ['other', 'Другое'],
+];
+
+export function medClassTitle(key) {
+  return (MED_CLASSES.find(([k]) => k === key) || [null, 'Другое'])[1];
+}
+
+export const DOSE_UNITS = ['мг', 'мкг', 'мл', 'таб', 'капли', 'ЕД', 'г'];
+
+export const BP_CONTEXTS = [
+  ['rest', 'Покой'],
+  ['morning', 'Утро'],
+  ['evening', 'Вечер'],
+  ['beforeMed', 'До приёма'],
+  ['afterMed', 'После приёма'],
+  ['load', 'Нагрузка'],
+  ['other', 'Другое'],
+];
+
+export function bpContextTitle(key) {
+  return (BP_CONTEXTS.find(([k]) => k === key) || [null, ''])[1];
+}
+
+// Ощущения от приёма: три группы шкал (психические / физические / неврологические).
+export const EFFECT_GROUPS = [
+  {
+    key: 'psych', title: 'Психические', icon: 'wind',
+    items: [
+      ['anxiety', 'Тревога'],
+      ['mood', 'Сниж. настроение'],
+      ['irritability', 'Раздражительность'],
+      ['sleep', 'Плохой сон'],
+    ],
+  },
+  {
+    key: 'physical', title: 'Физические', icon: 'heart',
+    items: [
+      ['nausea', 'Тошнота'],
+      ['weakness', 'Слабость'],
+      ['palpitations', 'Сердцебиение'],
+      ['dizziness', 'Головокружение'],
+      ['appetite', 'Аппетит ↓'],
+    ],
+  },
+  {
+    key: 'neuro', title: 'Неврологические', icon: 'waveform.path',
+    items: [
+      ['tension', 'Напряжение / ГБ'],
+      ['fog', 'Туман в голове'],
+      ['focus', 'Труд. концентрации'],
+      ['tremor', 'Тремор'],
+      ['paresthesia', 'Онемение / покал.'],
+    ],
+  },
+];
+
+// 0–3 severity для симптомов.
+export const SEVERITY = ['нет', 'лёгк', 'умер', 'выраж'];

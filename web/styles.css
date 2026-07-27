@@ -264,3 +264,26 @@ svg.ic.lg { width: 28px; height: 28px; }
   background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-size: 14px;
   z-index: 200; animation: fade .15s ease;
 }
+
+/* Здоровье */
+.card.dim { opacity: .55; }
+
+.sev-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+.sev-label { flex: 1; font-size: 14px; }
+.sev-cells { display: flex; gap: 4px; }
+.sev-cell {
+  min-width: 42px; text-align: center; padding: 7px 4px; border-radius: 9px;
+  background: var(--secondary-bg); color: var(--text-secondary); font-size: 12px;
+}
+.sev-cell.on { color: #fff; }
+.sev-cell.on.lvl0 { background: var(--accent-soft); color: var(--text); }
+.sev-cell.on.lvl1 { background: var(--accent); }
+.sev-cell.on.lvl2 { background: #C9922E; }
+.sev-cell.on.lvl3 { background: var(--danger); }
+
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: var(--radius-sm); border: 1px solid var(--separator); }
+table.report { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 720px; }
+table.report th, table.report td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--separator); white-space: nowrap; }
+table.report th { background: var(--secondary-bg); font-weight: 600; position: sticky; top: 0; }
+table.report td:nth-child(8) { white-space: normal; min-width: 160px; }
+table.report tr:last-child td { border-bottom: none; }

@@ -1,6 +1,6 @@
 // HGBN service worker — офлайн-first кэш приложения.
 // Бамп версии инвалидирует старый кэш при обновлении ассетов.
-const VERSION = 'hgbn-v1';
+const VERSION = 'hgbn-v2';
 const ASSETS = [
   './',
   './index.html',

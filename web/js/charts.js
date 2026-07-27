@@ -50,6 +50,24 @@ export function hourChart(buckets) {
   return svg(`${bars}${labels}`);
 }
 
+// points: [{ date, sys, dia }] — две линии на общей шкале.
+export function bpChart(points) {
+  if (!points.length) return empty();
+  const vals = points.flatMap((p) => [p.sys, p.dia]).filter((v) => v > 0);
+  const max = Math.max(160, ...vals) + 5;
+  const min = Math.min(50, ...vals) - 5;
+  const span = Math.max(1, max - min);
+  const sx = (i) => (points.length <= 1 ? PAD : PAD + (i * (W - PAD * 2)) / (points.length - 1));
+  const sy = (v) => H - PAD - ((v - min) / span) * (H - PAD * 2);
+  const line = (key, color) => {
+    const coords = points.map((p, i) => [sx(i), sy(p[key])]);
+    const path = coords.map((c, i) => (i ? 'L' : 'M') + c[0].toFixed(1) + ' ' + c[1].toFixed(1)).join(' ');
+    const dots = coords.map((c) => `<circle cx="${c[0].toFixed(1)}" cy="${c[1].toFixed(1)}" r="2.5" fill="${color}"/>`).join('');
+    return `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>${dots}`;
+  };
+  return svg(`${line('sys', 'var(--accent)')}${line('dia', 'var(--accent-soft)')}${xLabels(points)}`);
+}
+
 export function donut(shares) {
   if (!shares.length) return empty();
   const total = shares.reduce((s, x) => s + x.count, 0);

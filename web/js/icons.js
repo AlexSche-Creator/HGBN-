@@ -49,6 +49,9 @@ const PATHS = {
   reset: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 4v4h4"/>',
   check: '<path d="M5 13l4 4L19 7"/>',
   dot: '<circle cx="12" cy="12" r="3.5"/>',
+  pill: '<rect x="3" y="9" width="18" height="6" rx="3" transform="rotate(-45 12 12)"/><path d="M8.5 8.5l7 7"/>',
+  activity: '<path d="M3 12h4l2 6 4-14 2 8h6"/>',
+  table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/>',
 };
 
 const ALIASES = {

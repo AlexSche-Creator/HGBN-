@@ -14,6 +14,10 @@ function defaultData() {
     episodes: [],
     anxiety: [],
     overrides: {}, // dayKey -> { status, comment }
+    bp: [],          // измерения давления
+    medications: [], // лекарства
+    intakes: [],     // приёмы/пропуски
+    effects: [],     // ощущения от приёма
     settings: structuredClone(DEFAULT_SETTINGS),
   };
 }
@@ -35,6 +39,10 @@ class Store {
     this.data.settings = { ...DEFAULT_SETTINGS, ...(this.data.settings || {}) };
     this.data.settings.thresholds = { ...DEFAULT_THRESHOLDS, ...(this.data.settings.thresholds || {}) };
     this.data.overrides = this.data.overrides || {};
+    this.data.bp = this.data.bp || [];
+    this.data.medications = this.data.medications || [];
+    this.data.intakes = this.data.intakes || [];
+    this.data.effects = this.data.effects || [];
     if (!this.data.reasons || !this.data.reasons.length) this.data.reasons = defaultReasons(uid);
     this.applyTheme();
   }
@@ -183,11 +191,86 @@ class Store {
     this.commit();
   }
 
+  // --- Давление ---
+  get bp() { return this.data.bp; }
+  bpSorted() { return [...this.data.bp].sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime)); }
+  bpOn(date) {
+    const k = dayKey(date);
+    return this.bpSorted().filter((r) => dayKey(r.dateTime) === k);
+  }
+  latestBP() { return this.bpSorted()[0] || null; }
+  upsertBP(r) {
+    const i = this.data.bp.findIndex((x) => x.id === r.id);
+    if (i >= 0) this.data.bp[i] = r; else this.data.bp.push(r);
+    this.commit();
+  }
+  deleteBP(id) { this.data.bp = this.data.bp.filter((r) => r.id !== id); this.commit(); }
+
+  // --- Лекарства ---
+  medications(activeOnly = false) {
+    const list = [...this.data.medications].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    return activeOnly ? list.filter((m) => m.isActive) : list;
+  }
+  medication(id) { return this.data.medications.find((m) => m.id === id); }
+  medicationName(id) { return this.medication(id)?.name; }
+  upsertMedication(m) {
+    const i = this.data.medications.findIndex((x) => x.id === m.id);
+    if (i >= 0) {
+      this.data.medications[i] = m;
+    } else {
+      m.sortOrder = (this.data.medications.reduce((mx, x) => Math.max(mx, x.sortOrder ?? 0), 0)) + 1;
+      this.data.medications.push(m);
+    }
+    this.commit();
+  }
+  toggleMedActive(id) {
+    const m = this.medication(id);
+    if (m) { m.isActive = !m.isActive; this.commit(); }
+  }
+  deleteMedication(id) {
+    this.data.medications = this.data.medications.filter((m) => m.id !== id);
+    this.data.intakes = this.data.intakes.filter((x) => x.medicationId !== id);
+    this.data.effects = this.data.effects.map((e) => e.medicationId === id ? { ...e, medicationId: null } : e);
+    this.commit();
+  }
+
+  // --- Приёмы ---
+  logIntake(medicationId, taken) {
+    this.data.intakes.push({
+      id: uid(), medicationId, dateTime: new Date().toISOString(), taken, note: null,
+      createdAt: new Date().toISOString(),
+    });
+    this.commit();
+  }
+  intakesOn(date) {
+    const k = dayKey(date);
+    return this.data.intakes
+      .filter((x) => dayKey(x.dateTime) === k)
+      .sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime));
+  }
+  intakesFor(medicationId) { return this.data.intakes.filter((x) => x.medicationId === medicationId); }
+  deleteIntake(id) { this.data.intakes = this.data.intakes.filter((x) => x.id !== id); this.commit(); }
+
+  // --- Ощущения ---
+  get effects() { return this.data.effects; }
+  effectsSorted() { return [...this.data.effects].sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime)); }
+  effectsFor(medicationId) { return this.effectsSorted().filter((e) => e.medicationId === medicationId); }
+  latestEffectFor(medicationId) { return this.effectsFor(medicationId)[0] || null; }
+  upsertEffect(e) {
+    const i = this.data.effects.findIndex((x) => x.id === e.id);
+    if (i >= 0) this.data.effects[i] = e; else this.data.effects.push(e);
+    this.commit();
+  }
+  deleteEffect(id) { this.data.effects = this.data.effects.filter((e) => e.id !== id); this.commit(); }
+
   // --- Сброс ---
   resetEntries() {
     this.data.episodes = [];
     this.data.anxiety = [];
     this.data.overrides = {};
+    this.data.bp = [];
+    this.data.intakes = [];
+    this.data.effects = [];
     this.commit();
   }
   resetAll() {

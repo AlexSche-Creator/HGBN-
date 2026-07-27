@@ -1,8 +1,10 @@
 import { store, episodeDuration, recordDuration } from './store.js';
 import { calculateDay, dayKey, startOfDay, formatDuration } from './calculator.js';
-import { STATUSES, STATUS_META, EPISODE_TYPES, DAY_LONG } from './defaults.js';
+import { STATUSES, STATUS_META, EPISODE_TYPES, DAY_LONG,
+  MED_CLASSES, medClassTitle, DOSE_UNITS, BP_CONTEXTS, bpContextTitle,
+  EFFECT_GROUPS, SEVERITY } from './defaults.js';
 import { summary as statsSummary } from './stats.js';
-import { lineChart, barChart, hourChart, donut } from './charts.js';
+import { lineChart, barChart, hourChart, donut, bpChart } from './charts.js';
 import { exportJSON, exportCSV } from './export.js';
 import { icon } from './icons.js';
 
@@ -34,6 +36,7 @@ const state = {
   calMonth: startOfDay(new Date()),
   statsPeriod: 'week',
   settingsRoute: 'root',
+  healthRoute: 'root',
 };
 let timer = null;
 
@@ -496,6 +499,264 @@ function saveAnxiety() {
   toast('Тревога сохранена');
 }
 
+// ---------- HEALTH (давление + лекарства) ----------
+function selectField(field, current, options) {
+  return `<select data-field="${field}">${options.map(([v, l]) =>
+    `<option value="${v}" ${current === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+}
+
+function medDoseText(m) {
+  const parts = [];
+  const dv = `${m.doseValue || ''} ${m.doseUnit || ''}`.trim();
+  if (dv) parts.push(dv);
+  if (m.schedule) parts.push(m.schedule);
+  return parts.join(' · ') || '—';
+}
+
+function periodText(m) {
+  const f = (d) => d ? new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' }) : '';
+  if (!m.startDate && !m.endDate) return m.isActive ? 'принимаю' : '—';
+  return `${f(m.startDate) || '…'} – ${m.endDate ? f(m.endDate) : 'сейчас'}`;
+}
+
+function renderHealth() {
+  if (state.healthRoute === 'table') return renderHealthTable();
+
+  const latest = store.latestBP();
+  const bpPoints = store.bpSorted().slice(0, 14).reverse().map((r) => ({ date: r.dateTime, sys: r.sys, dia: r.dia }));
+  const meds = store.medications();
+  const todayIntakes = store.intakesOn(new Date());
+
+  const bpCard = `
+    <div class="section-header">Давление</div>
+    <div class="card stack">
+      ${latest ? `
+        <div><span style="font-size:30px;font-weight:700;color:var(--accent)">${latest.sys}/${latest.dia}</span>
+          <span class="muted"> мм рт.ст.${latest.pulse ? ` · пульс ${latest.pulse}` : ''}</span></div>
+        <div class="muted" style="font-size:13px">${new Date(latest.dateTime).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}${latest.context ? ` · ${esc(bpContextTitle(latest.context))}` : ''}</div>
+      ` : '<div class="muted">Пока нет измерений давления.</div>'}
+      <button class="btn-primary" data-action="open-bp">${icon('plus')} Записать давление</button>
+    </div>
+    ${bpPoints.length > 1 ? `<div class="card">
+        <div class="row between"><div class="section-header">Динамика</div>
+          <div class="legend" style="margin:0"><span class="li"><span class="dot" style="background:var(--accent)"></span>СИС</span><span class="li"><span class="dot" style="background:var(--accent-soft)"></span>ДИА</span></div></div>
+        ${bpChart(bpPoints)}</div>` : ''}
+    ${bpRecentList()}`;
+
+  const medRows = meds.length ? meds.map((m) => {
+    const taken = todayIntakes.filter((x) => x.medicationId === m.id && x.taken).length;
+    return `<div class="card tight ${m.isActive ? '' : 'dim'}">
+      <div class="row between">
+        <div class="grow" data-action="edit-med" data-id="${m.id}">
+          <div style="font-weight:600">${icon('pill', 'sm')} ${esc(m.name)}</div>
+          <div class="muted" style="font-size:12px">${esc(medClassTitle(m.medClass))} · ${esc(medDoseText(m))}</div>
+        </div>
+        <span class="badge">${taken ? `${icon('check', 'sm')} ${taken}×` : 'сегодня'}</span>
+      </div>
+      <div class="row" style="gap:8px;margin-top:8px">
+        <button class="btn-secondary" style="padding:10px" data-action="took-med" data-id="${m.id}">${icon('check', 'sm')} Принял</button>
+        <button class="btn-secondary" style="padding:10px" data-action="skip-med" data-id="${m.id}">Пропустил</button>
+        <button class="icon-btn" data-action="open-effect" data-med="${m.id}" aria-label="Ощущения">${icon('activity', 'sm')}</button>
+      </div>
+    </div>`;
+  }).join('') : '<div class="muted" style="padding:2px 4px 8px">Лекарства пока не добавлены.</div>';
+
+  view.innerHTML = `
+    <h1 class="nav-title">Здоровье</h1>
+    ${bpCard}
+    <div style="height:8px"></div>
+    <div class="section-header">Лекарства</div>
+    ${medRows}
+    <div class="stack" style="margin-top:10px">
+      <button class="btn-secondary" data-action="open-med">${icon('plus')} Добавить лекарство</button>
+      <button class="btn-secondary" data-action="open-effect">${icon('activity')} Зафиксировать ощущения</button>
+      <button class="btn-secondary" data-action="health-goto" data-route="table">${icon('table')} Сводная таблица</button>
+    </div>
+    <div class="card"><div class="muted" style="font-size:13px">Дневник самонаблюдения. Давление и препараты фиксируются для наблюдения и разговора с врачом — это не диагноз и не назначение. Данные хранятся только на устройстве.</div></div>`;
+}
+
+function bpRecentList() {
+  const list = store.bpSorted().slice(0, 5);
+  if (!list.length) return '';
+  return `<div class="list-head">Недавние измерения</div>` + list.map((r) => `
+    <div class="card tight row between">
+      <div><span style="font-weight:600">${r.sys}/${r.dia}</span>${r.pulse ? ` <span class="muted">· ${r.pulse}</span>` : ''}
+        <div class="muted" style="font-size:12px">${new Date(r.dateTime).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}${r.context ? ` · ${esc(bpContextTitle(r.context))}` : ''}</div></div>
+      <button class="btn-ghost" style="color:var(--danger)" data-action="del-bp" data-id="${r.id}">×</button>
+    </div>`).join('');
+}
+
+function topSymptoms(eff) {
+  const items = EFFECT_GROUPS.flatMap((g) => g.items);
+  return items.filter(([k]) => (eff.scales?.[k] || 0) > 0)
+    .map(([k, label]) => `${label}: ${SEVERITY[eff.scales[k]]}`)
+    .slice(0, 4).join(', ');
+}
+
+function renderHealthTable() {
+  const meds = store.medications();
+  const rows = meds.map((m) => {
+    const eff = store.latestEffectFor(m.id);
+    const taken = store.intakesFor(m.id).filter((x) => x.taken).length;
+    const symptoms = eff ? topSymptoms(eff) : '';
+    return `<tr>
+      <td>${esc(m.name)}${m.isActive ? '' : ' <span class="muted">(неактивно)</span>'}</td>
+      <td>${esc(medClassTitle(m.medClass))}</td>
+      <td>${esc(medDoseText(m))}</td>
+      <td>${esc(m.prescribedBy || '—')}</td>
+      <td>${esc(m.purpose || '—')}</td>
+      <td>${esc(periodText(m))}</td>
+      <td style="text-align:center">${taken}</td>
+      <td>${esc(symptoms) || '—'}</td>
+      <td style="text-align:center">${eff && eff.effectiveness ? eff.effectiveness + '/10' : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  view.innerHTML = `
+    <div class="row" style="gap:8px;margin:8px 0 12px"><button class="btn-ghost" data-action="health-back">${icon('chevron.left', 'sm')} Здоровье</button></div>
+    <h1 class="nav-title" style="margin-top:0">Сводная таблица</h1>
+    <div class="muted" style="font-size:13px;margin-bottom:12px">Финальный отчёт по препаратам: назначения врачей, приёмы и ваши ощущения. Это не медицинский документ.</div>
+    <div class="table-scroll"><table class="report">
+      <thead><tr><th>Препарат</th><th>Класс</th><th>Доза/схема</th><th>Назначил</th><th>Цель</th><th>Период</th><th>Приёмы</th><th>Ощущения</th><th>Эффект.</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="9" class="muted" style="text-align:center;padding:16px">Нет данных — добавьте лекарства</td></tr>'}</tbody>
+    </table></div>
+    <div class="muted" style="font-size:12px;margin-top:10px;padding:0 4px">В следующей фазе сюда будет автоматически подтягиваться извлечённое из PDF/фото заключений и назначений.</div>`;
+}
+
+// ---------- BP SHEET ----------
+let bpForm = null;
+function openBPSheet(r) {
+  bpForm = r
+    ? { id: r.id, dateTime: r.dateTime, sys: r.sys, dia: r.dia, pulse: r.pulse ?? '', context: r.context || 'rest', notes: r.notes || '', isNew: false }
+    : { id: store.uid(), dateTime: new Date().toISOString(), sys: '', dia: '', pulse: '', context: 'rest', notes: '', isNew: true };
+  openSheet(renderBPSheet);
+}
+function renderBPSheet() {
+  const f = bpForm;
+  return `
+    <div class="sheet-head"><div class="title">Давление</div><button class="btn-ghost" data-action="save-bp">Сохранить</button></div>
+    <div class="field-row"><label class="field">Время</label><input type="datetime-local" data-field="dateTime" value="${toLocalInput(f.dateTime)}"/></div>
+    <div class="row" style="gap:10px">
+      <div class="grow"><label class="field">САД (верх.)</label><input type="number" inputmode="numeric" data-field="sys" value="${esc(f.sys)}" placeholder="120"/></div>
+      <div class="grow"><label class="field">ДАД (нижн.)</label><input type="number" inputmode="numeric" data-field="dia" value="${esc(f.dia)}" placeholder="80"/></div>
+      <div class="grow"><label class="field">Пульс</label><input type="number" inputmode="numeric" data-field="pulse" value="${esc(f.pulse)}" placeholder="70"/></div>
+    </div>
+    <div class="field-row" style="margin-top:14px"><label class="field">Контекст</label>${selectField('context', f.context, BP_CONTEXTS)}</div>
+    <div class="field-row"><label class="field">Заметка</label><textarea data-field="notes">${esc(f.notes)}</textarea></div>
+    <button class="btn-primary" data-action="save-bp">${icon('check')} Сохранить</button>`;
+}
+function saveBP() {
+  const f = bpForm;
+  const sys = parseInt(f.sys, 10), dia = parseInt(f.dia, 10);
+  const pulse = f.pulse !== '' && f.pulse != null ? parseInt(f.pulse, 10) : null;
+  if (!sys || !dia) { toast('Укажите САД и ДАД'); return; }
+  store.upsertBP({ id: f.id, dateTime: f.dateTime, sys, dia, pulse: pulse || null, context: f.context, notes: f.notes || null, createdAt: new Date().toISOString() });
+  closeSheet();
+  toast('Давление сохранено');
+}
+
+// ---------- MEDICATION SHEET ----------
+let medForm = null;
+function openMedSheet(m) {
+  medForm = m
+    ? { ...m, isNew: false }
+    : {
+        id: store.uid(), name: '', medClass: 'other', doseValue: '', doseUnit: 'мг', schedule: '',
+        prescribedBy: '', prescribedDate: '', purpose: '', startDate: new Date().toISOString().slice(0, 10),
+        endDate: '', isActive: true, notes: '', isNew: true,
+      };
+  openSheet(renderMedSheet);
+}
+function renderMedSheet() {
+  const f = medForm;
+  return `
+    <div class="sheet-head"><div class="title">${f.isNew ? 'Новое лекарство' : 'Лекарство'}</div><button class="btn-ghost" data-action="save-med">Сохранить</button></div>
+    <div class="field-row"><label class="field">Название</label><input type="text" data-field="name" value="${esc(f.name)}" placeholder="напр. Амитриптилин"/></div>
+    <div class="field-row"><label class="field">Класс</label>${selectField('medClass', f.medClass, MED_CLASSES)}</div>
+    <div class="row" style="gap:10px">
+      <div class="grow"><label class="field">Доза</label><input type="text" inputmode="decimal" data-field="doseValue" value="${esc(f.doseValue)}" placeholder="25"/></div>
+      <div style="width:120px"><label class="field">Ед.</label>${selectField('doseUnit', f.doseUnit, DOSE_UNITS.map((u) => [u, u]))}</div>
+    </div>
+    <div class="field-row" style="margin-top:14px"><label class="field">Схема приёма</label><input type="text" data-field="schedule" value="${esc(f.schedule)}" placeholder="1 раз в день, вечером"/></div>
+    <div class="field-row"><label class="field">Цель назначения</label><input type="text" data-field="purpose" value="${esc(f.purpose)}" placeholder="профилактика напряжения"/></div>
+    <div class="row" style="gap:10px">
+      <div class="grow"><label class="field">Назначил (врач)</label><input type="text" data-field="prescribedBy" value="${esc(f.prescribedBy)}" placeholder="невролог"/></div>
+      <div style="width:150px"><label class="field">Дата назн.</label><input type="date" data-field="prescribedDate" value="${f.prescribedDate || ''}"/></div>
+    </div>
+    <div class="row" style="gap:10px;margin-top:14px">
+      <div class="grow"><label class="field">Начало</label><input type="date" data-field="startDate" value="${f.startDate || ''}"/></div>
+      <div class="grow"><label class="field">Окончание</label><input type="date" data-field="endDate" value="${f.endDate || ''}"/></div>
+    </div>
+    <div class="card row between" style="margin-top:14px"><span>Активно (принимаю сейчас)</span><div class="toggle ${f.isActive ? 'on' : ''}" data-action="toggle-med-form"><div class="knob"></div></div></div>
+    <div class="field-row"><label class="field">Заметка</label><textarea data-field="notes">${esc(f.notes)}</textarea></div>
+    ${f.isNew ? '' : `<button class="btn-secondary" style="color:var(--danger);margin-bottom:10px" data-action="del-med" data-id="${f.id}">${icon('trash', 'sm')} Удалить лекарство</button>`}
+    <button class="btn-primary" data-action="save-med">${icon('check')} Сохранить</button>`;
+}
+function saveMed() {
+  const f = medForm;
+  if (!f.name || !f.name.trim()) { toast('Укажите название'); return; }
+  const existing = store.medication(f.id);
+  store.upsertMedication({
+    id: f.id, name: f.name.trim(), medClass: f.medClass, doseValue: f.doseValue || '', doseUnit: f.doseUnit || '',
+    schedule: f.schedule || '', prescribedBy: f.prescribedBy || '', prescribedDate: f.prescribedDate || '',
+    purpose: f.purpose || '', startDate: f.startDate || '', endDate: f.endDate || '', isActive: f.isActive,
+    notes: f.notes || '', sortOrder: f.sortOrder, createdAt: existing?.createdAt || new Date().toISOString(),
+  });
+  closeSheet();
+  toast('Лекарство сохранено');
+}
+
+// ---------- EFFECT SHEET ----------
+let effForm = null;
+function openEffectSheet(existing, medId) {
+  const scales = {};
+  EFFECT_GROUPS.forEach((g) => g.items.forEach(([k]) => { scales[k] = 0; }));
+  effForm = existing
+    ? { id: existing.id, dateTime: existing.dateTime, medicationId: existing.medicationId || '', scales: { ...scales, ...(existing.scales || {}) }, effectiveness: existing.effectiveness || 0, tolerability: existing.tolerability || 0, sideEffects: existing.sideEffects || '', notes: existing.notes || '', isNew: false }
+    : { id: store.uid(), dateTime: new Date().toISOString(), medicationId: medId || '', scales, effectiveness: 0, tolerability: 0, sideEffects: '', notes: '', isNew: true };
+  openSheet(renderEffectSheet);
+}
+function severityRow(key, label, value) {
+  const cells = SEVERITY.map((s, i) =>
+    `<div class="sev-cell ${i === value ? 'on lvl' + i : ''}" data-action="sev" data-key="${key}" data-val="${i}">${s}</div>`).join('');
+  return `<div class="sev-row"><span class="sev-label">${esc(label)}</span><div class="sev-cells">${cells}</div></div>`;
+}
+function scaleRow(label, value, action) {
+  const cells = Array.from({ length: 10 }, (_, i) => i + 1).map((i) =>
+    `<div class="icell ${i <= value ? 'on' : ''}" data-action="${action}" data-val="${i}">${i}</div>`).join('');
+  return `<div class="intensity"><div class="intensity-head"><span class="lbl">${esc(label)}</span><span class="val">${value ? value + '/10' : '—'}</span></div><div class="intensity-cells">${cells}</div></div>`;
+}
+function renderEffectSheet() {
+  const f = effForm;
+  const meds = store.medications();
+  const groups = EFFECT_GROUPS.map((g) => `
+    <div class="card stack">
+      <div class="section-header">${icon(g.icon, 'sm')} ${g.title}</div>
+      ${g.items.map(([k, label]) => severityRow(k, label, f.scales[k] || 0)).join('')}
+    </div>`).join('');
+  return `
+    <div class="sheet-head"><div class="title">Ощущения</div><button class="btn-ghost" data-action="save-effect">Сохранить</button></div>
+    <div class="field-row"><label class="field">Время</label><input type="datetime-local" data-field="dateTime" value="${toLocalInput(f.dateTime)}"/></div>
+    <div class="field-row"><label class="field">Лекарство (необязательно)</label>
+      <select data-field="medicationId"><option value="">Общий фон</option>${meds.map((m) => `<option value="${m.id}" ${f.medicationId === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
+    ${groups}
+    <div class="card">${scaleRow('Субъективная эффективность', f.effectiveness, 'eff-effect')}</div>
+    <div class="card">${scaleRow('Переносимость', f.tolerability, 'eff-tol')}</div>
+    <div class="field-row"><label class="field">Побочные эффекты</label><input type="text" data-field="sideEffects" value="${esc(f.sideEffects)}"/></div>
+    <div class="field-row"><label class="field">Заметка</label><textarea data-field="notes">${esc(f.notes)}</textarea></div>
+    <button class="btn-primary" data-action="save-effect">${icon('check')} Сохранить</button>`;
+}
+function saveEffect() {
+  const f = effForm;
+  store.upsertEffect({
+    id: f.id, dateTime: f.dateTime, medicationId: f.medicationId || null, scales: f.scales,
+    effectiveness: f.effectiveness || 0, tolerability: f.tolerability || 0,
+    sideEffects: f.sideEffects || null, notes: f.notes || null, createdAt: new Date().toISOString(),
+  });
+  closeSheet();
+  toast('Ощущения сохранены');
+}
+
 // ---------- SHEET system ----------
 let sheetRenderer = null;
 let sheetCtx = null;
@@ -514,6 +775,7 @@ function closeSheet() { sheetRenderer = null; sheetCtx = null; sheetRoot.innerHT
 function render() {
   if (timer) { clearInterval(timer); timer = null; }
   if (state.tab === 'home') renderHome();
+  else if (state.tab === 'health') renderHealth();
   else if (state.tab === 'calendar') renderCalendar();
   else if (state.tab === 'stats') renderStats();
   else renderSettings();
@@ -527,7 +789,7 @@ function syncTabs() {
 document.addEventListener('click', (e) => {
   const t = e.target.closest('[data-action], .tab');
   if (!t) return;
-  if (t.classList.contains('tab')) { state.tab = t.dataset.tab; state.settingsRoute = 'root'; render(); return; }
+  if (t.classList.contains('tab')) { state.tab = t.dataset.tab; state.settingsRoute = 'root'; state.healthRoute = 'root'; render(); return; }
   const a = t.dataset.action;
   const handlers = {
     'start-episode': () => { store.startEpisode(); },
@@ -565,6 +827,25 @@ document.addEventListener('click', (e) => {
     'toggle-reason': () => toggleFormReason(t.dataset.id),
     'seg': () => handleSeg(t.dataset.group, t.dataset.val),
     'step': () => handleStep(t.dataset.field, Number(t.dataset.d)),
+    // --- Здоровье ---
+    'health-goto': () => { state.healthRoute = t.dataset.route; render(); },
+    'health-back': () => { state.healthRoute = 'root'; render(); },
+    'open-bp': () => openBPSheet(null),
+    'edit-bp': () => openBPSheet(store.bp.find((x) => x.id === t.dataset.id)),
+    'del-bp': () => store.deleteBP(t.dataset.id),
+    'save-bp': saveBP,
+    'open-med': () => openMedSheet(null),
+    'edit-med': () => openMedSheet(store.medication(t.dataset.id)),
+    'save-med': saveMed,
+    'del-med': () => { if (confirm('Удалить лекарство и связанные записи приёмов?')) { store.deleteMedication(t.dataset.id); closeSheet(); toast('Удалено'); } },
+    'toggle-med-form': () => { medForm.isActive = !medForm.isActive; renderSheet(); },
+    'took-med': () => { store.logIntake(t.dataset.id, true); toast('Отмечено: принял'); },
+    'skip-med': () => { store.logIntake(t.dataset.id, false); toast('Отмечено: пропустил'); },
+    'open-effect': () => openEffectSheet(null, t.dataset.med || ''),
+    'save-effect': saveEffect,
+    'sev': () => { effForm.scales[t.dataset.key] = Number(t.dataset.val); renderSheet(); },
+    'eff-effect': () => { effForm.effectiveness = Number(t.dataset.val); renderSheet(); },
+    'eff-tol': () => { effForm.tolerability = Number(t.dataset.val); renderSheet(); },
   };
   if (handlers[a]) handlers[a]();
 });
@@ -577,16 +858,27 @@ document.addEventListener('input', (e) => {
   const val = f.value;
   if (sheetIsEpisode() && epForm && ['startTime', 'endTime', 'customReason', 'notes'].includes(field)) { epForm[field] = val; }
   if (sheetIsAnxiety() && anxForm && ['startTime', 'customReason', 'notes', 'linkedEpisodeID'].includes(field)) { anxForm[field] = val; }
+  const hform = activeHealthForm();
+  if (hform) { hform[field] = val; }
 });
 document.addEventListener('change', (e) => {
   const r = e.target.closest('[data-action="rename-reason"]');
   if (r) { store.updateReason(r.dataset.id, { title: e.target.value.trim() || 'Без названия' }); return; }
-  const sel = e.target.closest('select[data-field="linkedEpisodeID"]');
-  if (sel && anxForm) anxForm.linkedEpisodeID = sel.value;
+  const sel = e.target.closest('select[data-field]');
+  if (!sel) return;
+  if (sel.dataset.field === 'linkedEpisodeID' && anxForm) { anxForm.linkedEpisodeID = sel.value; return; }
+  const hform = activeHealthForm();
+  if (hform) hform[sel.dataset.field] = sel.value;
 });
 
 function sheetIsEpisode() { return sheetRenderer === renderEpisodeSheet; }
 function sheetIsAnxiety() { return sheetRenderer === renderAnxietySheet; }
+function activeHealthForm() {
+  if (sheetRenderer === renderBPSheet) return bpForm;
+  if (sheetRenderer === renderMedSheet) return medForm;
+  if (sheetRenderer === renderEffectSheet) return effForm;
+  return null;
+}
 
 function setActiveFormIntensity(v) {
   if (sheetIsEpisode()) { epForm.intensity = v; renderSheet(); }
@@ -661,7 +953,15 @@ function scheduleReminderNote() {
 }
 
 // ---------- boot ----------
+function paintTabIcons() {
+  const map = { home: 'home', health: 'heart', calendar: 'calendar', stats: 'stats', settings: 'settings' };
+  document.querySelectorAll('.tab-icon[data-icon]').forEach((el) => {
+    el.innerHTML = icon(map[el.dataset.icon] || 'dot');
+  });
+}
+
 store.subscribe(() => { render(); if (sheetCtx?.date) renderSheet(); });
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => store.applyTheme());
+paintTabIcons();
 render();
 scheduleReminderNote();
