@@ -46,6 +46,9 @@ export const DEFAULT_SETTINGS = {
   theme: 'system', // system | light | dark
   reminderEnabled: false,
   reminderHour: 21,
+  aiConsent: false, // согласие на отправку мед-данных в AI
+  aiModelExtract: 'claude-sonnet-5',
+  aiModelReport: 'claude-opus-5',
   thresholds: { ...DEFAULT_THRESHOLDS },
 };
 
@@ -170,3 +173,28 @@ export const EFFECT_GROUPS = [
 
 // 0–3 severity для симптомов.
 export const SEVERITY = ['нет', 'лёгк', 'умер', 'выраж'];
+
+// ---------- v3 фаза C: обобщённое «вмешательство» ----------
+// Тип вмешательства (препарат — частный случай).
+export const INTERVENTION_TYPES = [
+  ['medication', 'Препарат'],
+  ['procedure', 'Процедура'],
+  ['therapy', 'Терапия'],
+  ['diagnostic', 'Диагностика'],
+  ['massage', 'Массаж'],
+  ['surgery', 'Операция'],
+  ['supplement', 'БАД'],
+];
+export function interventionTypeTitle(key) {
+  return (INTERVENTION_TYPES.find(([k]) => k === key) || [null, 'Препарат'])[1];
+}
+
+// Знаковая шкала действия −10…+10 по трём измерениям; сумма = эффективность.
+export const SIGNED_AXES = [
+  ['physScore', 'Физич.'],
+  ['psychScore', 'Психич.'],
+  ['neuroScore', 'Невр.'],
+];
+export function signedSum(m) {
+  return SIGNED_AXES.reduce((s, [k]) => s + (Number(m?.[k]) || 0), 0);
+}

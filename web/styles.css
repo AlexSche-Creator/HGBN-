@@ -318,5 +318,28 @@ svg.ic.lg { width: 28px; height: 28px; }
 table.report { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 720px; }
 table.report th, table.report td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--separator); white-space: nowrap; }
 table.report th { background: var(--secondary-bg); font-weight: 600; position: sticky; top: 0; }
-table.report td:nth-child(8) { white-space: normal; min-width: 160px; }
 table.report tr:last-child td { border-bottom: none; }
+table.report td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.report td.sens { white-space: normal; min-width: 180px; color: var(--text-secondary); }
+table.report tr.hi td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.pos { color: var(--accent); font-weight: 600; }
+.neg { color: var(--danger); font-weight: 600; }
+
+/* Знаковый ползунок действия */
+.signed-row { display: grid; grid-template-columns: 68px 1fr 40px; align-items: center; gap: 10px; padding: 5px 0; }
+.signed-label { font-size: 13px; color: var(--text-secondary); }
+.signed-range { width: 100%; accent-color: var(--accent); }
+.signed-val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; }
+.signed-val.muted { color: var(--text-secondary); font-weight: 400; }
+
+/* Callout (документы, Daylio) */
+.callout { border-left: 3px solid var(--accent); background: var(--accent-tint); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding: 12px 14px; margin: 12px 0; font-size: 14px; }
+.callout.warn { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.callout .lbl { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+.callout.warn .lbl { color: var(--danger); }
+
+/* AI: чат и вывод */
+.ai-out { background: var(--secondary-bg); border-radius: var(--radius-sm); padding: 12px 14px; font-size: 14px; line-height: 1.55; white-space: normal; }
+.chat-msg { padding: 10px 12px; border-radius: 14px; font-size: 14px; line-height: 1.5; max-width: 88%; }
+.chat-msg.user { background: var(--accent); color: #fff; align-self: flex-end; margin-left: auto; border-bottom-right-radius: 4px; }
+.chat-msg.assistant { background: var(--secondary-bg); align-self: flex-start; border-bottom-left-radius: 4px; }

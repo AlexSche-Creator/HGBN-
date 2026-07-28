@@ -2,12 +2,15 @@ import { store, episodeDuration, recordDuration } from './store.js';
 import { calculateDay, dayKey, startOfDay, formatDuration } from './calculator.js';
 import { STATUSES, STATUS_META, EPISODE_TYPES, DAY_LONG,
   MED_CLASSES, medClassTitle, DOSE_UNITS, BP_CONTEXTS, bpContextTitle,
-  EFFECT_GROUPS, SEVERITY } from './defaults.js';
+  EFFECT_GROUPS, SEVERITY, INTERVENTION_TYPES, interventionTypeTitle,
+  SIGNED_AXES, signedSum } from './defaults.js';
 import { summary as statsSummary, moodSummary } from './stats.js';
 import { lineChart, barChart, hourChart, donut, bpChart } from './charts.js';
 import { exportJSON, exportCSV } from './export.js';
 import { icon } from './icons.js';
 import { parseDaylio, MOOD_META } from './daylio.js';
+import { putDoc, getDoc, deleteDoc, blobToBase64 } from './db.js';
+import * as ai from './ai.js';
 
 // ---------- helpers ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -133,9 +136,32 @@ function importSection() {
     <div class="list">
       ${daylioRow}
       <div class="list-item tappable" data-action="import-soon" data-what="Apple Health">${icon('heart')}<span class="grow">Импорт Apple Health</span>${icon('chevron.right', 'sm')}</div>
-      <div class="list-item tappable" data-action="import-soon" data-what="Документы">${icon('table')}<span class="grow">Загрузка JPEG / PDF анамнеза</span>${icon('chevron.right', 'sm')}</div>
+      <div class="list-item tappable" data-action="pick-doc">${icon('upload')}<span class="grow">Загрузить JPEG / PDF анамнеза</span>${icon('chevron.right', 'sm')}</div>
     </div>
-    <div class="muted" style="font-size:12px;margin:6px 4px 10px">Daylio: настроения, маркеры и цели переносятся из бэкапа. Apple Health и распознавание документов — в ближайших фазах.</div>`;
+    ${documentsSection()}
+    <div class="muted" style="font-size:12px;margin:6px 4px 10px">Daylio переносится из бэкапа. Документы распознаёт AI (Диагностика → AI-ключ), нормализуя отчёт по первичным документам с печатями. Apple Health — в ближайшей фазе.</div>`;
+}
+
+function documentsSection() {
+  const docs = store.documents();
+  if (!docs.length) return '';
+  const rows = docs.map((d) => {
+    const kind = d.mediaType === 'application/pdf' ? 'PDF' : 'JPEG';
+    const status = d.parsed ? `<span class="badge">${icon('check', 'sm')} распознан</span>` : '';
+    return `<div class="card tight">
+      <div class="row between">
+        <div class="grow"><div style="font-weight:600">${icon('table', 'sm')} ${esc(d.name)}</div>
+          <div class="muted" style="font-size:12px">${kind} · ${new Date(d.addedAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' })}${d.clinic ? ` · ${esc(d.clinic)}` : ''}</div></div>
+        ${status}
+      </div>
+      <div class="row" style="gap:8px;margin-top:8px">
+        <button class="btn-secondary" style="padding:10px" data-action="parse-doc" data-id="${d.id}">${icon('spark', 'sm')} Распознать</button>
+        <button class="icon-btn" data-action="view-doc" data-id="${d.id}" aria-label="Открыть">${icon('eye', 'sm')}</button>
+        <button class="icon-btn" style="color:var(--danger)" data-action="del-doc" data-id="${d.id}" aria-label="Удалить">${icon('trash', 'sm')}</button>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="section-header">Документы</div>${rows}`;
 }
 
 // ---------- Импорт Daylio: разбор → предпросмотр → запись ----------
@@ -387,6 +413,8 @@ function renderDiag() {
     <div class="list"><div class="list-item">${icon('settings')}<span class="grow">Тема</span>
       <div style="width:200px">${segmented('theme', s.theme, [['system', 'Системная'], ['light', 'Светлая'], ['dark', 'Тёмная']])}</div></div></div>
 
+    ${aiDiagSection()}
+
     <div class="list-head">Данные</div>
     <div class="list">
       <div class="list-item tappable" data-action="export-json">${icon('export')}<span class="grow">Экспорт в JSON</span></div>
@@ -419,6 +447,46 @@ function stepperHtml(field, value, suffix = '') {
   return `<div class="stepper"><button data-action="step" data-field="${field}" data-d="-1">−</button>
     <span class="sval">${value}${suffix}</span>
     <button data-action="step" data-field="${field}" data-d="1">+</button></div>`;
+}
+
+// Настройки AI: ключ, модели, согласие.
+function aiDiagSection() {
+  const s = store.settings;
+  const has = ai.hasApiKey();
+  const modelOpts = [['claude-sonnet-5', 'Sonnet 5'], ['claude-opus-5', 'Opus 5'], ['claude-haiku-4-5', 'Haiku 4.5']];
+  return `
+    <div class="list-head">AI-ключ и модели</div>
+    <div class="card stack">
+      <label class="field">Ключ Claude API (только на устройстве)</label>
+      <div class="row" style="gap:8px">
+        <input type="password" id="ai-key-input" placeholder="${has ? '•••• сохранён' : 'sk-ant-…'}" autocomplete="off"/>
+        <button class="btn-secondary" style="width:auto;padding:12px 16px" data-action="save-ai-key">Сохранить</button>
+      </div>
+      ${has ? `<button class="btn-ghost" style="color:var(--danger);align-self:flex-start" data-action="clear-ai-key">Удалить ключ</button>` : ''}
+      <div class="row between"><span>Модель распознавания документов</span><div style="width:150px">${selectField('aiModelExtract', s.aiModelExtract, modelOpts)}</div></div>
+      <div class="row between"><span>Модель отчёта и чата</span><div style="width:150px">${selectField('aiModelReport', s.aiModelReport, modelOpts)}</div></div>
+      <div class="row between"><span>Согласие на отправку данных в AI</span><div class="toggle ${s.aiConsent ? 'on' : ''}" data-action="toggle-consent"><div class="knob"></div></div></div>
+      <div class="muted" style="font-size:12px">Ключ не входит в экспорт данных. Медицинские данные уходят в API только при включённом согласии.</div>
+    </div>`;
+}
+
+async function aiAnalyze() {
+  if (aiBusy || !store.settings.aiConsent) return;
+  aiBusy = true; render();
+  try { aiResult = await ai.analyze({ snapshot: aiSnapshot(), model: store.settings.aiModelReport }); }
+  catch (e) { aiResult = 'Ошибка: ' + (e?.message || 'неизвестно'); }
+  aiBusy = false; render();
+}
+async function aiSend() {
+  const inp = $('#ai-input');
+  const q = inp && inp.value.trim();
+  if (!q || aiBusy || !store.settings.aiConsent) return;
+  aiChat.push({ role: 'user', text: q }); aiBusy = true; render();
+  try {
+    const a = await ai.chat({ history: aiChat, snapshot: aiSnapshot(), model: store.settings.aiModelReport });
+    aiChat.push({ role: 'assistant', text: a });
+  } catch (e) { aiChat.push({ role: 'assistant', text: 'Ошибка: ' + (e?.message || 'неизвестно') }); }
+  aiBusy = false; render();
 }
 
 function renderReasons(filter) {
@@ -633,7 +701,7 @@ function selectField(field, current, options) {
 
 function medDoseText(m) {
   const parts = [];
-  const dv = `${m.doseValue || ''} ${m.doseUnit || ''}`.trim();
+  const dv = m.doseValue ? `${m.doseValue} ${m.doseUnit || ''}`.trim() : '';
   if (dv) parts.push(dv);
   if (m.schedule) parts.push(m.schedule);
   return parts.join(' · ') || '—';
@@ -733,20 +801,71 @@ function moodBody() {
     <div class="card stack"><div class="section-header">Частые маркеры</div>${markers}</div>`;
 }
 
-// ---------- AI-АНАЛИТИКА (каркас, наполнение — фаза D) ----------
+// ---------- AI-АНАЛИТИКА (наблюдения + чат на вашем ключе) ----------
+let aiChat = [];
+let aiResult = '';
+let aiBusy = false;
 function renderAI() {
+  const s = store.settings;
+  if (!ai.hasApiKey()) {
+    view.innerHTML = `
+      <h1 class="nav-title">AI-аналитика</h1>
+      <div class="card stack">
+        <div class="section-header">${icon('spark', 'sm')} Нужен ключ Claude API</div>
+        <div class="muted">Наблюдения и чат работают на вашем ключе Anthropic — он хранится только на устройстве. Медицинские данные уходят в API только с вашего согласия.</div>
+        <button class="btn-primary" data-action="goto-ai-key">${icon('settings')} Добавить ключ в «Диагностике»</button>
+      </div>
+      <div class="card"><div class="muted" style="font-size:13px">Ключ можно получить в консоли Anthropic. Ничего не отправляется, пока вы не нажмёте «получить наблюдения» и не включите согласие.</div></div>`;
+    return;
+  }
+  const consentCard = s.aiConsent ? '' : `
+    <div class="card stack">
+      <div class="row between"><span style="font-weight:600">Согласие на отправку данных</span>
+        <div class="toggle ${s.aiConsent ? 'on' : ''}" data-action="toggle-consent"><div class="knob"></div></div></div>
+      <div class="muted" style="font-size:13px">Для наблюдений приложение отправит обезличенный срез (эпизоды, давление, приёмы, ощущения) в Claude API. Включите, если согласны.</div>
+    </div>`;
+
+  const chatHtml = aiChat.map((m) => `
+    <div class="chat-msg ${m.role}">${esc(m.text).replace(/\n/g, '<br>')}</div>`).join('');
+
   view.innerHTML = `
     <h1 class="nav-title">AI-аналитика</h1>
+    ${consentCard}
     <div class="card stack">
-      <div class="section-header">${icon('spark', 'sm')} Скоро</div>
-      <div class="muted">Здесь появятся наблюдения и чат с ИИ по вашим данным — через Claude API на вашем ключе, который хранится только на устройстве.</div>
+      <div class="section-header">Наблюдения</div>
+      <div class="muted" style="font-size:13px">Корреляции по вашим данным и вопросы к врачу. Не диагноз и не назначение.</div>
+      <button class="btn-primary" data-action="ai-analyze" ${(!s.aiConsent || aiBusy) ? 'disabled style="opacity:.5"' : ''}>${icon('spark')} ${aiBusy ? 'Думаю…' : 'Получить наблюдения'}</button>
+      ${aiResult ? `<div class="ai-out">${esc(aiResult).replace(/\n/g, '<br>')}</div>` : ''}
     </div>
-    <div class="list" style="margin-top:8px">
-      <div class="list-item">${icon('activity')}<span class="grow">Корреляции: тревога · давление · напряжение · препараты</span></div>
-      <div class="list-item">${icon('chat')}<span class="grow">Вопросы к вашей истории и разбор заключений</span></div>
-      <div class="list-item">${icon('table')}<span class="grow">Вопросы к врачу по сводным отчётам</span></div>
+    <div class="card stack">
+      <div class="section-header">Чат по вашей истории</div>
+      ${chatHtml || '<div class="muted" style="font-size:13px">Задайте вопрос — модель ответит по вашему срезу данных.</div>'}
+      <div class="row" style="gap:8px">
+        <input type="text" id="ai-input" placeholder="Ваш вопрос" ${(!s.aiConsent || aiBusy) ? 'disabled' : ''}/>
+        <button class="btn-secondary" style="width:auto;padding:12px 16px" data-action="ai-send" ${(!s.aiConsent || aiBusy) ? 'disabled style="opacity:.5"' : ''}>${icon('chat', 'sm')}</button>
+      </div>
     </div>
-    <div class="card"><div class="muted" style="font-size:13px">ИИ и приложение не ставят диагноз и не назначают лечение. Медицинские данные уходят в API только по вашему согласию. Подключим на фазе D.</div></div>`;
+    <div class="card"><div class="muted" style="font-size:12px">Модель извлечения: ${esc(s.aiModelExtract)}, отчёта: ${esc(s.aiModelReport)}. ИИ не ставит диагноз и не назначает лечение.</div></div>`;
+}
+
+// Обезличенный срез данных для AI.
+function aiSnapshot() {
+  const meds = store.medications().map((m) => ({
+    name: m.name, type: m.type, dose: prescriptionText(m), clinic: m.clinic || m.prescribedBy || '',
+    phys: m.physScore || 0, psych: m.psychScore || 0, neuro: m.neuroScore || 0, sum: signedSum(m),
+    sensations: m.sensations || '', active: !!m.isActive,
+  }));
+  const recentBP = store.bpSorted().slice(0, 20).map((r) => ({ date: r.dateTime.slice(0, 10), sys: r.sys, dia: r.dia, pulse: r.pulse, ctx: r.context }));
+  const s = statsSummary('month');
+  const mood = store.hasDaylio() ? moodSummary('month') : null;
+  return {
+    период: 'последний месяц',
+    эпизоды: { всего: s.totalEpisodes, средняя_интенсивность: +s.avgIntensity.toFixed(1), тревога: s.anxietyEpisodes, корреляция_тревога_напряжение: +s.correlation.toFixed(2) },
+    топ_причин: s.topHeadache.map((x) => `${x.title}×${x.count}`),
+    давление: recentBP,
+    вмешательства: meds,
+    настроение: mood ? { записей: mood.count, распределение: mood.dist.slice(1) } : null,
+  };
 }
 
 function bpRecentList() {
@@ -767,34 +886,45 @@ function topSymptoms(eff) {
     .slice(0, 4).join(', ');
 }
 
+function prescriptionText(m) {
+  const parts = [];
+  const dv = m.doseValue ? `${m.doseValue} ${m.doseUnit || ''}`.trim() : '';
+  if (dv) parts.push(dv);
+  if (m.schedule) parts.push(m.schedule);
+  return parts.join(' · ') || '—';
+}
+function signedCell(v) {
+  const n = Number(v) || 0;
+  const cls = n > 0 ? 'pos' : (n < 0 ? 'neg' : '');
+  return `<td class="num ${cls}">${n > 0 ? '+' + n : n}</td>`;
+}
 function renderHealthTable() {
   const meds = store.medications();
-  const rows = meds.map((m) => {
-    const eff = store.latestEffectFor(m.id);
-    const taken = store.intakesFor(m.id).filter((x) => x.taken).length;
-    const symptoms = eff ? topSymptoms(eff) : '';
-    return `<tr>
-      <td>${esc(m.name)}${m.isActive ? '' : ' <span class="muted">(неактивно)</span>'}</td>
-      <td>${esc(medClassTitle(m.medClass))}</td>
-      <td>${esc(medDoseText(m))}</td>
-      <td>${esc(m.prescribedBy || '—')}</td>
-      <td>${esc(m.purpose || '—')}</td>
-      <td>${esc(periodText(m))}</td>
-      <td style="text-align:center">${taken}</td>
-      <td>${esc(symptoms) || '—'}</td>
-      <td style="text-align:center">${eff && eff.effectiveness ? eff.effectiveness + '/10' : '—'}</td>
+  const rows = meds.map((m, i) => {
+    const prov = m.provenance ? `<span title="из первичного документа с печатью" style="color:var(--accent)">${icon('check', 'sm')}</span> ` : '';
+    const sens = m.sensations || (store.latestEffectFor(m.id) ? topSymptoms(store.latestEffectFor(m.id)) : '');
+    const sum = signedSum(m);
+    return `<tr class="${m.highlighted ? 'hi' : ''}">
+      <td class="num">${i + 1}</td>
+      <td>${prov}${esc(m.name)}${m.isActive ? '' : ' <span class="muted">(неактивно)</span>'}</td>
+      <td>${esc(prescriptionText(m))}</td>
+      <td>${esc(m.clinic || m.prescribedBy || '—')}</td>
+      <td class="num">${esc(m.year || (m.startDate ? m.startDate.slice(0, 4) : '—'))}</td>
+      ${signedCell(m.physScore)}${signedCell(m.psychScore)}${signedCell(m.neuroScore)}
+      <td class="num ${sum > 0 ? 'pos' : (sum < 0 ? 'neg' : '')}">${sum > 0 ? '+' + sum : sum}</td>
+      <td class="sens">${esc(sens) || '—'}</td>
     </tr>`;
   }).join('');
 
   view.innerHTML = `
     <div class="row" style="gap:8px;margin:8px 0 12px"><button class="btn-ghost" data-action="diag-back">${icon('chevron.left', 'sm')} Диагностика</button></div>
-    <h1 class="nav-title" style="margin-top:0">Сводная таблица</h1>
-    <div class="muted" style="font-size:13px;margin-bottom:12px">Финальный отчёт по препаратам: назначения врачей, приёмы и ваши ощущения. Это не медицинский документ.</div>
+    <h1 class="nav-title" style="margin-top:0">Сводная таблица вмешательств</h1>
+    <div class="muted" style="font-size:13px;margin-bottom:12px">Наименование · назначение врача (доза/частота) · клиника · год · знаковое действие (−10…+10) · ощущения. ${icon('check', 'sm')} — поле подтверждено первичным документом с печатью. Это не медицинский документ.</div>
     <div class="table-scroll"><table class="report">
-      <thead><tr><th>Препарат</th><th>Класс</th><th>Доза/схема</th><th>Назначил</th><th>Цель</th><th>Период</th><th>Приёмы</th><th>Ощущения</th><th>Эффект.</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="9" class="muted" style="text-align:center;padding:16px">Нет данных — добавьте лекарства</td></tr>'}</tbody>
+      <thead><tr><th>№</th><th>Наименование</th><th>Назначение врача</th><th>Клиника</th><th>Год</th><th>Физ.</th><th>Псих.</th><th>Невр.</th><th>Сумма</th><th>Ощущения</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="10" class="muted" style="text-align:center;padding:16px">Нет данных — добавьте вмешательство</td></tr>'}</tbody>
     </table></div>
-    <div class="muted" style="font-size:12px;margin-top:10px;padding:0 4px">В следующей фазе сюда будет автоматически подтягиваться извлечённое из PDF/фото заключений и назначений.</div>`;
+    <div class="muted" style="font-size:12px;margin-top:10px;padding:0 4px">Столбцы дополняются распознаванием PDF/фото заключений — на вкладке «Ввод данных» → документы.</div>`;
 }
 
 // ---------- BP SHEET ----------
@@ -832,28 +962,49 @@ function saveBP() {
 // ---------- MEDICATION SHEET ----------
 let medForm = null;
 function openMedSheet(m) {
+  const base = {
+    type: 'medication', clinic: '', year: '', physScore: 0, psychScore: 0, neuroScore: 0,
+    sensations: '', highlighted: false,
+  };
   medForm = m
-    ? { ...m, isNew: false }
+    ? { ...base, ...m, isNew: false }
     : {
-        id: store.uid(), name: '', medClass: 'other', doseValue: '', doseUnit: 'мг', schedule: '',
+        ...base, id: store.uid(), name: '', medClass: 'other', doseValue: '', doseUnit: 'мг', schedule: '',
         prescribedBy: '', prescribedDate: '', purpose: '', startDate: new Date().toISOString().slice(0, 10),
         endDate: '', isActive: true, notes: '', isNew: true,
       };
   openSheet(renderMedSheet);
 }
+// Знаковый ползунок −10…+10 для оси действия.
+function signedRow(field, label, value) {
+  const v = Number(value) || 0;
+  const cls = v > 0 ? 'pos' : (v < 0 ? 'neg' : 'muted');
+  return `<div class="signed-row">
+    <span class="signed-label">${esc(label)}</span>
+    <input type="range" min="-10" max="10" step="1" value="${v}" data-signed="${field}" class="signed-range"/>
+    <span class="signed-val ${cls}">${v > 0 ? '+' + v : v}</span>
+  </div>`;
+}
 function renderMedSheet() {
   const f = medForm;
+  const sum = signedSum(f);
+  const sumCls = sum > 0 ? 'pos' : (sum < 0 ? 'neg' : 'muted');
   return `
-    <div class="sheet-head"><div class="title">${f.isNew ? 'Новое лекарство' : 'Лекарство'}</div><button class="btn-ghost" data-action="save-med">Сохранить</button></div>
-    <div class="field-row"><label class="field">Название</label><input type="text" data-field="name" value="${esc(f.name)}" placeholder="напр. Амитриптилин"/></div>
+    <div class="sheet-head"><div class="title">${f.isNew ? 'Новое вмешательство' : 'Вмешательство'}</div><button class="btn-ghost" data-action="save-med">Сохранить</button></div>
+    <div class="field-row"><label class="field">Наименование</label><input type="text" data-field="name" value="${esc(f.name)}" placeholder="напр. Амитриптилин"/></div>
+    <div class="field-row"><label class="field">Тип</label>${selectField('type', f.type, INTERVENTION_TYPES)}</div>
     <div class="field-row"><label class="field">Класс</label>${selectField('medClass', f.medClass, MED_CLASSES)}</div>
     <div class="row" style="gap:10px">
       <div class="grow"><label class="field">Доза</label><input type="text" inputmode="decimal" data-field="doseValue" value="${esc(f.doseValue)}" placeholder="25"/></div>
       <div style="width:120px"><label class="field">Ед.</label>${selectField('doseUnit', f.doseUnit, DOSE_UNITS.map((u) => [u, u]))}</div>
     </div>
-    <div class="field-row" style="margin-top:14px"><label class="field">Схема приёма</label><input type="text" data-field="schedule" value="${esc(f.schedule)}" placeholder="1 раз в день, вечером"/></div>
+    <div class="field-row" style="margin-top:14px"><label class="field">Схема / частота приёма</label><input type="text" data-field="schedule" value="${esc(f.schedule)}" placeholder="1 раз в день, вечером"/></div>
     <div class="field-row"><label class="field">Цель назначения</label><input type="text" data-field="purpose" value="${esc(f.purpose)}" placeholder="профилактика напряжения"/></div>
     <div class="row" style="gap:10px">
+      <div class="grow"><label class="field">Клиника</label><input type="text" data-field="clinic" value="${esc(f.clinic)}" placeholder="напр. Клиника Вейна"/></div>
+      <div style="width:110px"><label class="field">Год</label><input type="text" inputmode="numeric" data-field="year" value="${esc(f.year)}" placeholder="2023"/></div>
+    </div>
+    <div class="row" style="gap:10px;margin-top:14px">
       <div class="grow"><label class="field">Назначил (врач)</label><input type="text" data-field="prescribedBy" value="${esc(f.prescribedBy)}" placeholder="невролог"/></div>
       <div style="width:150px"><label class="field">Дата назн.</label><input type="date" data-field="prescribedDate" value="${f.prescribedDate || ''}"/></div>
     </div>
@@ -861,23 +1012,139 @@ function renderMedSheet() {
       <div class="grow"><label class="field">Начало</label><input type="date" data-field="startDate" value="${f.startDate || ''}"/></div>
       <div class="grow"><label class="field">Окончание</label><input type="date" data-field="endDate" value="${f.endDate || ''}"/></div>
     </div>
-    <div class="card row between" style="margin-top:14px"><span>Активно (принимаю сейчас)</span><div class="toggle ${f.isActive ? 'on' : ''}" data-action="toggle-med-form"><div class="knob"></div></div></div>
+    <div class="card stack" style="margin-top:14px">
+      <div class="row between"><div class="section-header">Действие (−10…+10)</div><span class="signed-val ${sumCls}" id="signed-sum">сумма ${sum > 0 ? '+' + sum : sum}</span></div>
+      ${SIGNED_AXES.map(([k, l]) => signedRow(k, l, f[k])).join('')}
+      <div class="muted" style="font-size:12px">Минус — ухудшило, плюс — помогло. Сумма трёх = субъективная эффективность.</div>
+    </div>
+    <div class="field-row"><label class="field">Ощущения (свободно)</label><textarea data-field="sensations" placeholder="как переносится, побочные, эффект">${esc(f.sensations)}</textarea></div>
+    <div class="card row between"><span>Активно (принимаю сейчас)</span><div class="toggle ${f.isActive ? 'on' : ''}" data-action="toggle-med-form"><div class="knob"></div></div></div>
+    <div class="card row between"><span>Выделить в отчёте</span><div class="toggle ${f.highlighted ? 'on' : ''}" data-action="toggle-med-hi"><div class="knob"></div></div></div>
     <div class="field-row"><label class="field">Заметка</label><textarea data-field="notes">${esc(f.notes)}</textarea></div>
-    ${f.isNew ? '' : `<button class="btn-secondary" style="color:var(--danger);margin-bottom:10px" data-action="del-med" data-id="${f.id}">${icon('trash', 'sm')} Удалить лекарство</button>`}
+    ${f.isNew ? '' : `<button class="btn-secondary" style="color:var(--danger);margin-bottom:10px" data-action="del-med" data-id="${f.id}">${icon('trash', 'sm')} Удалить</button>`}
     <button class="btn-primary" data-action="save-med">${icon('check')} Сохранить</button>`;
 }
 function saveMed() {
   const f = medForm;
-  if (!f.name || !f.name.trim()) { toast('Укажите название'); return; }
+  if (!f.name || !f.name.trim()) { toast('Укажите наименование'); return; }
   const existing = store.medication(f.id);
   store.upsertMedication({
-    id: f.id, name: f.name.trim(), medClass: f.medClass, doseValue: f.doseValue || '', doseUnit: f.doseUnit || '',
-    schedule: f.schedule || '', prescribedBy: f.prescribedBy || '', prescribedDate: f.prescribedDate || '',
-    purpose: f.purpose || '', startDate: f.startDate || '', endDate: f.endDate || '', isActive: f.isActive,
+    ...(existing || {}),
+    id: f.id, name: f.name.trim(), type: f.type || 'medication', medClass: f.medClass,
+    doseValue: f.doseValue || '', doseUnit: f.doseUnit || '', schedule: f.schedule || '',
+    prescribedBy: f.prescribedBy || '', prescribedDate: f.prescribedDate || '', purpose: f.purpose || '',
+    clinic: f.clinic || '', year: f.year || '',
+    physScore: Number(f.physScore) || 0, psychScore: Number(f.psychScore) || 0, neuroScore: Number(f.neuroScore) || 0,
+    sensations: f.sensations || '', highlighted: !!f.highlighted,
+    startDate: f.startDate || '', endDate: f.endDate || '', isActive: f.isActive,
     notes: f.notes || '', sortOrder: f.sortOrder, createdAt: existing?.createdAt || new Date().toISOString(),
   });
   closeSheet();
-  toast('Лекарство сохранено');
+  toast('Сохранено');
+}
+
+// ---------- Документы: загрузка, распознавание, нормализация ----------
+async function handleDocFile(file) {
+  if (!file) return;
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  const mediaType = isPdf ? 'application/pdf' : (file.type || 'image/jpeg');
+  const id = store.uid();
+  try {
+    await putDoc(id, file);
+    store.addDocument({ id, name: file.name || 'документ', mediaType, addedAt: new Date().toISOString(), parsed: false });
+    toast('Документ добавлен');
+  } catch (e) {
+    toast('Не удалось сохранить: ' + (e?.message || 'ошибка'));
+  }
+}
+
+let extractState = null;
+async function parseDoc(id) {
+  const meta = store.document(id);
+  if (!meta) return;
+  if (!ai.hasApiKey()) { toast('Сначала добавьте AI-ключ (Диагностика)'); return; }
+  if (!store.settings.aiConsent) { toast('Включите согласие на AI (AI-аналитика)'); return; }
+  toast('Распознаю документ…');
+  try {
+    const blob = await getDoc(id);
+    if (!blob) throw new Error('файл не найден');
+    const base64 = await blobToBase64(blob);
+    const data = await ai.extractDocument({ base64, mediaType: meta.mediaType, model: store.settings.aiModelExtract });
+    extractState = { docId: id, docName: meta.name, data };
+    openSheet(renderExtractPreview);
+  } catch (e) {
+    toast('Ошибка распознавания: ' + (e?.message || 'неизвестно'));
+  }
+}
+
+function renderExtractPreview() {
+  const { data, docName } = extractState || {};
+  if (!data) return '';
+  const existing = store.medicationByName(data.name);
+  const stamp = !!data.hasStamp;
+  const row = (label, val, over) => val
+    ? `<div class="row between"><span class="muted">${label}</span><span>${esc(val)}${over ? ` <span class="pos" style="font-size:12px">${icon('check', 'sm')}</span>` : ''}</span></div>`
+    : '';
+  return `
+    <div class="sheet-head"><div class="title">Распознано</div><button class="btn-ghost" data-action="close-sheet">Отмена</button></div>
+    <div class="muted">Из «${esc(docName)}». ${existing ? `Обновит вмешательство «${esc(existing.name)}».` : 'Создаст новое вмешательство.'}</div>
+    ${stamp ? `<div class="callout"><b>Первичный документ с печатью/подписью.</b> Отмеченные ${icon('check', 'sm')} поля (клиника, доза, частота) перекроют текущие и получат провенанс.</div>` : '<div class="muted" style="font-size:13px;margin-top:8px">Без печати — заполнятся только пустые поля, ничего не перезаписывается.</div>'}
+    <div class="card stack" style="margin-top:10px">
+      ${row('Наименование', data.name)}
+      ${row('Тип', interventionTypeTitle(data.type))}
+      ${row('Клиника', data.clinic, stamp)}
+      ${row('Врач', data.doctor)}
+      ${row('Год', data.year, stamp)}
+      ${row('Доза', data.dose, stamp)}
+      ${row('Частота', data.schedule, stamp)}
+      ${row('Цель', data.purpose)}
+      ${data.sensations ? `<div class="stack"><span class="muted">Ощущения</span><span>${esc(data.sensations)}</span></div>` : ''}
+      ${data.summary ? `<div class="stack"><span class="muted">Вывод</span><span>${esc(data.summary)}</span></div>` : ''}
+    </div>
+    <button class="btn-primary" data-action="apply-extract" style="margin-top:14px">${icon('check')} Применить в отчёт</button>`;
+}
+
+function applyExtraction() {
+  const st = extractState;
+  if (!st) return;
+  const d = st.data;
+  const stamp = !!d.hasStamp;
+  const now = new Date().toISOString();
+  const existing = store.medicationByName(d.name) || {};
+  const id = existing.id || store.uid();
+  const prov = { ...(existing.provenance || {}) };
+  const src = { doc: st.docName, date: now, stamp: true };
+  const merge = (cur, val, key) => {
+    if (!val) return cur || '';
+    if (stamp) { prov[key] = src; return val; }
+    return cur || val;
+  };
+  store.upsertMedication({
+    ...existing,
+    id,
+    name: (existing.name || d.name || 'Без названия').trim(),
+    type: existing.type || d.type || 'medication',
+    medClass: existing.medClass || 'other',
+    clinic: merge(existing.clinic, d.clinic, 'clinic'),
+    prescribedBy: existing.prescribedBy || d.doctor || '',
+    year: merge(existing.year, d.year, 'year'),
+    doseValue: merge(existing.doseValue, d.dose, 'dose'),
+    doseUnit: existing.doseUnit || '',
+    schedule: merge(existing.schedule, d.schedule, 'schedule'),
+    purpose: existing.purpose || d.purpose || '',
+    sensations: existing.sensations || d.sensations || '',
+    physScore: existing.physScore || 0, psychScore: existing.psychScore || 0, neuroScore: existing.neuroScore || 0,
+    highlighted: !!existing.highlighted,
+    isActive: existing.isActive ?? true,
+    startDate: existing.startDate || '', endDate: existing.endDate || '',
+    notes: existing.notes || '',
+    provenance: stamp ? prov : existing.provenance,
+    createdAt: existing.createdAt || now,
+  });
+  store.updateDocument(st.docId, { parsed: true, clinic: d.clinic || '' });
+  extractState = null;
+  closeSheet();
+  toast(stamp ? 'Отчёт нормализован по документу' : 'Данные добавлены в отчёт');
 }
 
 // ---------- EFFECT SHEET ----------
@@ -979,6 +1246,23 @@ document.addEventListener('click', (e) => {
     'open-anxiety': () => openAnxietySheet(store.activeAnxiety()),
     'import-soon': () => toast(`${t.dataset.what}: скоро, в ближайших фазах`),
     'pick-daylio': () => { const inp = $('#daylio-file'); if (inp) { inp.value = ''; inp.click(); } },
+    // --- Документы ---
+    'pick-doc': () => { const inp = $('#doc-file'); if (inp) { inp.value = ''; inp.click(); } },
+    'parse-doc': () => parseDoc(t.dataset.id),
+    'del-doc': () => { if (confirm('Удалить документ?')) { deleteDoc(t.dataset.id).catch(() => {}); store.deleteDocument(t.dataset.id); } },
+    'view-doc': async () => {
+      try { const blob = await getDoc(t.dataset.id); if (blob) window.open(URL.createObjectURL(blob), '_blank'); }
+      catch { toast('Не удалось открыть'); }
+    },
+    'apply-extract': applyExtraction,
+    // --- AI ---
+    'goto-ai-key': () => { state.tab = 'diag'; state.diagRoute = 'root'; render(); },
+    'toggle-consent': () => store.setSetting('aiConsent', !store.settings.aiConsent),
+    'save-ai-key': () => { const inp = $('#ai-key-input'); if (inp && inp.value.trim()) { ai.setApiKey(inp.value.trim()); toast('Ключ сохранён'); render(); } },
+    'clear-ai-key': () => { ai.setApiKey(''); toast('Ключ удалён'); render(); },
+    'ai-analyze': aiAnalyze,
+    'ai-send': aiSend,
+    'toggle-med-hi': () => { medForm.highlighted = !medForm.highlighted; renderSheet(); },
     'confirm-daylio': () => {
       if (!daylioPreview) return;
       store.importDaylio(daylioPreview);
@@ -1038,6 +1322,16 @@ document.addEventListener('click', (e) => {
 
 // инпуты (text / datetime / textarea / select) синхронизируем в form-state
 document.addEventListener('input', (e) => {
+  // Знаковые ползунки действия вмешательства.
+  const sg = e.target.closest('[data-signed]');
+  if (sg && medForm) {
+    medForm[sg.dataset.signed] = Number(sg.value) || 0;
+    const valEl = sg.parentElement.querySelector('.signed-val');
+    if (valEl) { const v = medForm[sg.dataset.signed]; valEl.textContent = v > 0 ? '+' + v : v; valEl.className = 'signed-val ' + (v > 0 ? 'pos' : (v < 0 ? 'neg' : 'muted')); }
+    const sumEl = $('#signed-sum');
+    if (sumEl) { const s = signedSum(medForm); sumEl.textContent = 'сумма ' + (s > 0 ? '+' + s : s); sumEl.className = 'signed-val ' + (s > 0 ? 'pos' : (s < 0 ? 'neg' : 'muted')); }
+    return;
+  }
   const f = e.target.closest('[data-field]');
   if (!f) return;
   const field = f.dataset.field;
@@ -1049,13 +1343,20 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('change', (e) => {
   if (e.target.id === 'daylio-file') { handleDaylioFile(e.target.files[0]); return; }
+  if (e.target.id === 'doc-file') { handleDocFile(e.target.files[0]); return; }
   const r = e.target.closest('[data-action="rename-reason"]');
   if (r) { store.updateReason(r.dataset.id, { title: e.target.value.trim() || 'Без названия' }); return; }
   const sel = e.target.closest('select[data-field]');
   if (!sel) return;
-  if (sel.dataset.field === 'linkedEpisodeID' && anxForm) { anxForm.linkedEpisodeID = sel.value; return; }
+  const field = sel.dataset.field;
+  if (field === 'aiModelExtract' || field === 'aiModelReport') { store.setSetting(field, sel.value); return; }
+  if (field === 'linkedEpisodeID' && anxForm) { anxForm.linkedEpisodeID = sel.value; return; }
   const hform = activeHealthForm();
-  if (hform) hform[sel.dataset.field] = sel.value;
+  if (hform) hform[field] = sel.value;
+});
+// Enter в поле чата AI отправляет вопрос.
+document.addEventListener('keydown', (e) => {
+  if (e.target.id === 'ai-input' && e.key === 'Enter') { e.preventDefault(); aiSend(); }
 });
 
 function sheetIsEpisode() { return sheetRenderer === renderEpisodeSheet; }

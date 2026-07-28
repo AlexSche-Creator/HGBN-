@@ -18,6 +18,7 @@ function defaultData() {
     medications: [], // лекарства
     intakes: [],     // приёмы/пропуски
     effects: [],     // ощущения от приёма
+    documents: [],   // метаданные загруженных PDF/JPEG (блобы — в IndexedDB)
     daylio: null,    // импорт из Daylio (настроения, маркеры, цели)
     settings: structuredClone(DEFAULT_SETTINGS),
   };
@@ -44,6 +45,7 @@ class Store {
     this.data.medications = this.data.medications || [];
     this.data.intakes = this.data.intakes || [];
     this.data.effects = this.data.effects || [];
+    this.data.documents = this.data.documents || [];
     if (!('daylio' in this.data)) this.data.daylio = null;
     if (!this.data.reasons || !this.data.reasons.length) this.data.reasons = defaultReasons(uid);
     this.applyTheme();
@@ -215,6 +217,11 @@ class Store {
   }
   medication(id) { return this.data.medications.find((m) => m.id === id); }
   medicationName(id) { return this.medication(id)?.name; }
+  medicationByName(name) {
+    const key = (name || '').trim().toLowerCase();
+    if (!key) return null;
+    return this.data.medications.find((m) => (m.name || '').trim().toLowerCase() === key) || null;
+  }
   upsertMedication(m) {
     const i = this.data.medications.findIndex((x) => x.id === m.id);
     if (i >= 0) {
@@ -306,6 +313,16 @@ class Store {
     return day.length ? day[day.length - 1].mood : null;
   }
   daylioGoalName(goalId) { return this.data.daylio?.goals.find((g) => g.id === goalId)?.name; }
+
+  // --- Документы (метаданные; блобы — в IndexedDB) ---
+  documents() { return [...this.data.documents].sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt)); }
+  document(id) { return this.data.documents.find((d) => d.id === id); }
+  addDocument(meta) { this.data.documents.push(meta); this.commit(); }
+  updateDocument(id, patch) {
+    const d = this.data.documents.find((x) => x.id === id);
+    if (d) { Object.assign(d, patch); this.commit(); }
+  }
+  deleteDocument(id) { this.data.documents = this.data.documents.filter((d) => d.id !== id); this.commit(); }
 
   // --- Сброс ---
   resetEntries() {
