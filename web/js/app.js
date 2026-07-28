@@ -11,6 +11,7 @@ import { icon } from './icons.js';
 import { parseDaylio, MOOD_META } from './daylio.js';
 import { putDoc, getDoc, deleteDoc, blobToBase64 } from './db.js';
 import * as ai from './ai.js';
+import { parseAppleHealth, HEALTH_METRICS } from './applehealth.js';
 
 // ---------- helpers ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -131,15 +132,19 @@ function importSection() {
   const daylioRow = d
     ? `<div class="list-item tappable" data-action="pick-daylio">${icon('check')}<span class="grow">Daylio импортирован · ${d.counts?.entries ?? d.entries.length} записей</span><span class="muted" style="font-size:12px">обновить</span></div>`
     : `<div class="list-item tappable" data-action="pick-daylio">${icon('upload')}<span class="grow">Импорт Daylio (.daylio)</span>${icon('chevron.right', 'sm')}</div>`;
+  const h = store.health;
+  const healthRow = store.hasHealth()
+    ? `<div class="list-item tappable" data-action="pick-health">${icon('check')}<span class="grow">Apple Health · ${h.counts?.days ?? Object.keys(h.days).length} дней</span><span class="muted" style="font-size:12px">обновить</span></div>`
+    : `<div class="list-item tappable" data-action="pick-health">${icon('heart')}<span class="grow">Импорт Apple Health (ZIP)</span>${icon('chevron.right', 'sm')}</div>`;
   return `
     <div class="section-header">Импорт и загрузка</div>
     <div class="list">
       ${daylioRow}
-      <div class="list-item tappable" data-action="import-soon" data-what="Apple Health">${icon('heart')}<span class="grow">Импорт Apple Health</span>${icon('chevron.right', 'sm')}</div>
+      ${healthRow}
       <div class="list-item tappable" data-action="pick-doc">${icon('upload')}<span class="grow">Загрузить JPEG / PDF анамнеза</span>${icon('chevron.right', 'sm')}</div>
     </div>
     ${documentsSection()}
-    <div class="muted" style="font-size:12px;margin:6px 4px 10px">Daylio переносится из бэкапа. Документы распознаёт AI (Диагностика → AI-ключ), нормализуя отчёт по первичным документам с печатями. Apple Health — в ближайшей фазе.</div>`;
+    <div class="muted" style="font-size:12px;margin:6px 4px 10px">Daylio и Apple Health переносятся из выгрузок. Документы распознаёт AI (Диагностика → AI-ключ), нормализуя отчёт по первичным документам с печатями.</div>`;
 }
 
 function documentsSection() {
@@ -295,6 +300,14 @@ function openDay(date) {
           <button class="btn-ghost" style="color:var(--danger)" data-action="del-anxiety" data-id="${a.id}">×</button></span>
       </div>`).join('');
 
+    let healthBlock = '';
+    const hm = store.healthOn(date);
+    if (hm) {
+      const cells = HEALTH_METRICS.filter(([k]) => hm[k] != null).map(([k, l, u]) =>
+        `<div class="row between"><span class="muted">${l}</span><span style="font-weight:600">${hm[k]}${u ? ' ' + u : ''}</span></div>`).join('');
+      if (cells) healthBlock = `<div class="list-head">Apple Health</div><div class="card tight stack">${cells}</div>`;
+    }
+
     let daylioBlock = '';
     if (store.hasDaylio()) {
       const k = dayKey(date);
@@ -328,8 +341,9 @@ function openDay(date) {
       ${overrideBtns}
       ${eps.length ? `<div class="list-head">Эпизоды</div>${epList}` : ''}
       ${anx.length ? `<div class="list-head">Тревога</div>${anxList}` : ''}
+      ${healthBlock}
       ${daylioBlock}
-      ${!eps.length && !anx.length && !daylioBlock ? '<div class="empty-chart">В этот день записей нет</div>' : ''}`;
+      ${!eps.length && !anx.length && !daylioBlock && !healthBlock ? '<div class="empty-chart">В этот день записей нет</div>' : ''}`;
   };
   openSheet(render, { date });
 }
@@ -390,6 +404,7 @@ function renderDiag() {
       <div class="list-item tappable" data-action="goto" data-route="table">${icon('table')}<span class="grow">Сводная таблица вмешательств</span>${icon('chevron.right', 'sm')}</div>
     </div>
     ${daylioDiagSection()}
+    ${healthDiagSection()}
     <div class="list-head">Причины</div>
     <div class="list">
       <div class="list-item tappable" data-action="goto" data-route="reasons-headache">${icon('waveform.path')}<span class="grow">Причины напряжения</span>${icon('chevron.right', 'sm')}</div>
@@ -447,6 +462,26 @@ function stepperHtml(field, value, suffix = '') {
   return `<div class="stepper"><button data-action="step" data-field="${field}" data-d="-1">−</button>
     <span class="sval">${value}${suffix}</span>
     <button data-action="step" data-field="${field}" data-d="1">+</button></div>`;
+}
+
+// Обзор импорта Apple Health.
+function healthDiagSection() {
+  if (!store.hasHealth()) return '';
+  const h = store.health;
+  const days = Object.values(h.days);
+  const avg = (k) => { const xs = days.map((d) => d[k]).filter((x) => x != null); return xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null; };
+  const sleep = () => { const xs = days.map((d) => d.sleepH).filter((x) => x != null); return xs.length ? (xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(1) : null; };
+  const rows = [
+    ['Средний пульс', avg('hr'), 'уд/мин'], ['Пульс покоя', avg('restHr'), 'уд/мин'],
+    ['ВСР (SDNN)', avg('hrv'), 'мс'], ['Сон', sleep(), 'ч'],
+  ].filter(([, v]) => v != null).map(([l, v, u]) => `<div class="row between"><span>${l}</span><span class="muted">${v} ${u}</span></div>`).join('');
+  const range = h.range ? `${new Date(h.range.from).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' })} — ${new Date(h.range.to).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' })}` : '';
+  return `
+    <div class="list-head">Apple Health · ${h.counts.days} дней</div>
+    <div class="card stack">
+      <div class="muted" style="font-size:13px">${range}. Средние по всему периоду:</div>
+      ${rows || '<div class="muted" style="font-size:13px">Нет метрик</div>'}
+    </div>`;
 }
 
 // Настройки AI: ключ, модели, согласие.
@@ -858,6 +893,11 @@ function aiSnapshot() {
   const recentBP = store.bpSorted().slice(0, 20).map((r) => ({ date: r.dateTime.slice(0, 10), sys: r.sys, dia: r.dia, pulse: r.pulse, ctx: r.context }));
   const s = statsSummary('month');
   const mood = store.hasDaylio() ? moodSummary('month') : null;
+  let health = null;
+  if (store.hasHealth()) {
+    const keys = Object.keys(store.health.days).sort().slice(-14);
+    health = keys.map((k) => ({ date: k, ...store.health.days[k] }));
+  }
   return {
     период: 'последний месяц',
     эпизоды: { всего: s.totalEpisodes, средняя_интенсивность: +s.avgIntensity.toFixed(1), тревога: s.anxietyEpisodes, корреляция_тревога_напряжение: +s.correlation.toFixed(2) },
@@ -865,6 +905,7 @@ function aiSnapshot() {
     давление: recentBP,
     вмешательства: meds,
     настроение: mood ? { записей: mood.count, распределение: mood.dist.slice(1) } : null,
+    apple_health: health,
   };
 }
 
@@ -1147,6 +1188,40 @@ function applyExtraction() {
   toast(stamp ? 'Отчёт нормализован по документу' : 'Данные добавлены в отчёт');
 }
 
+// ---------- Apple Health: импорт выгрузки ----------
+let healthPreview = null;
+async function handleHealthFile(file) {
+  if (!file) return;
+  toast('Разбираю Apple Health…');
+  try {
+    const parsed = await parseAppleHealth(file);
+    if (!parsed.counts.days) { toast('Не нашёл метрик в файле'); return; }
+    healthPreview = parsed;
+    openSheet(renderHealthPreview);
+  } catch (e) {
+    toast('Не удалось прочитать: ' + (e?.message || 'ошибка формата'));
+  }
+}
+function renderHealthPreview() {
+  const p = healthPreview;
+  if (!p) return '';
+  const c = p.counts;
+  const range = p.range ? `${new Date(p.range.from).toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' })} → ${new Date(p.range.to).toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' })}` : '—';
+  const found = {};
+  Object.values(p.days).forEach((d) => Object.keys(d).forEach((k) => { found[k] = 1; }));
+  const metrics = HEALTH_METRICS.filter(([k]) => found[k]).map(([, l]) => l).join(' · ') || '—';
+  return `
+    <div class="sheet-head"><div class="title">Импорт Apple Health</div>
+      <button class="btn-ghost" data-action="close-sheet">Отмена</button></div>
+    <div class="muted">Проверьте охват и подтвердите перенос.</div>
+    <div class="grid2" style="margin-top:12px">
+      ${metric(c.days, 'дней с данными', 'calendar')}
+      ${metric(c.records.toLocaleString('ru-RU'), 'записей', 'activity')}
+    </div>
+    <div class="card" style="margin-top:10px"><div class="muted" style="font-size:13px">Период: ${range}. Метрики: ${esc(metrics)}. Встанут рядом с эпизодами и давлением — в календаре и AI-аналитике.</div></div>
+    <button class="btn-primary" data-action="confirm-health" style="margin-top:14px">${icon('check')} Импортировать</button>`;
+}
+
 // ---------- EFFECT SHEET ----------
 let effForm = null;
 function openEffectSheet(existing, medId) {
@@ -1255,6 +1330,9 @@ document.addEventListener('click', (e) => {
       catch { toast('Не удалось открыть'); }
     },
     'apply-extract': applyExtraction,
+    // --- Apple Health ---
+    'pick-health': () => { const inp = $('#health-file'); if (inp) { inp.value = ''; inp.click(); } },
+    'confirm-health': () => { if (healthPreview) { store.importHealth(healthPreview); healthPreview = null; closeSheet(); toast('Apple Health импортирован'); } },
     // --- AI ---
     'goto-ai-key': () => { state.tab = 'diag'; state.diagRoute = 'root'; render(); },
     'toggle-consent': () => store.setSetting('aiConsent', !store.settings.aiConsent),
@@ -1344,6 +1422,7 @@ document.addEventListener('input', (e) => {
 document.addEventListener('change', (e) => {
   if (e.target.id === 'daylio-file') { handleDaylioFile(e.target.files[0]); return; }
   if (e.target.id === 'doc-file') { handleDocFile(e.target.files[0]); return; }
+  if (e.target.id === 'health-file') { handleHealthFile(e.target.files[0]); return; }
   const r = e.target.closest('[data-action="rename-reason"]');
   if (r) { store.updateReason(r.dataset.id, { title: e.target.value.trim() || 'Без названия' }); return; }
   const sel = e.target.closest('select[data-field]');

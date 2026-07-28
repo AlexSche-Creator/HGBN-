@@ -20,6 +20,7 @@ function defaultData() {
     effects: [],     // ощущения от приёма
     documents: [],   // метаданные загруженных PDF/JPEG (блобы — в IndexedDB)
     daylio: null,    // импорт из Daylio (настроения, маркеры, цели)
+    health: null,    // импорт Apple Health (дневные метрики)
     settings: structuredClone(DEFAULT_SETTINGS),
   };
 }
@@ -47,6 +48,7 @@ class Store {
     this.data.effects = this.data.effects || [];
     this.data.documents = this.data.documents || [];
     if (!('daylio' in this.data)) this.data.daylio = null;
+    if (!('health' in this.data)) this.data.health = null;
     if (!this.data.reasons || !this.data.reasons.length) this.data.reasons = defaultReasons(uid);
     this.applyTheme();
   }
@@ -323,6 +325,21 @@ class Store {
     if (d) { Object.assign(d, patch); this.commit(); }
   }
   deleteDocument(id) { this.data.documents = this.data.documents.filter((d) => d.id !== id); this.commit(); }
+
+  // --- Apple Health ---
+  get health() { return this.data.health; }
+  hasHealth() { return !!this.data.health && !!this.data.health.days; }
+  importHealth(parsed) {
+    this.data.health = { ...parsed, importedAt: new Date().toISOString() };
+    this.commit();
+  }
+  healthOn(date) {
+    if (!this.hasHealth()) return null;
+    const d = new Date(date);
+    const p = (n) => String(n).padStart(2, '0');
+    const key = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    return this.data.health.days[key] || null;
+  }
 
   // --- Сброс ---
   resetEntries() {
