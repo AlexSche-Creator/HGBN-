@@ -226,10 +226,33 @@ svg.ic.lg { width: 28px; height: 28px; }
   padding: 8px 0 calc(8px + var(--safe-bottom));
   z-index: 50;
 }
-.tab { display: flex; flex-direction: column; align-items: center; gap: 3px; color: var(--text-secondary); flex: 1; padding: 2px 0; }
+.tab { display: flex; flex-direction: column; align-items: center; gap: 3px; color: var(--text-secondary); flex: 1; padding: 2px 0; background: none; border: none; }
 .tab.on { color: var(--accent); }
 .tab-label { font-size: 11px; }
 .tab-icon svg { width: 24px; height: 24px; }
+
+/* Глобальная кнопка «+» — фиксация эпизода с любой вкладки */
+.fab {
+  position: fixed; right: 18px; z-index: 60;
+  bottom: calc(70px + var(--safe-bottom));
+  width: 56px; height: 56px; border-radius: 50%;
+  background: var(--accent); color: #fff; border: none;
+  box-shadow: 0 6px 18px rgba(10,186,181,.4);
+  display: grid; place-items: center; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.fab::before, .fab::after { content: ''; position: absolute; background: #fff; border-radius: 2px; }
+.fab::before { width: 22px; height: 3px; }
+.fab::after { width: 3px; height: 22px; }
+.fab:active { transform: scale(.94); }
+
+/* Хаб выбора эпизода из «+» */
+.capture-choice { display: grid; gap: 12px; }
+.capture-card { border: 1px solid var(--separator); border-radius: 16px; padding: 16px; }
+.capture-card h3 { margin: 0 0 4px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.capture-card .sub { color: var(--text-secondary); font-size: 13px; margin-bottom: 12px; }
+.capture-card .row { display: flex; gap: 10px; }
+.capture-card .row > button { flex: 1; padding: 14px; }
 
 /* Модальные листы */
 .sheet-backdrop {

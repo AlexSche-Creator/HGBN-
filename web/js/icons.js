@@ -52,6 +52,11 @@ const PATHS = {
   pill: '<rect x="3" y="9" width="18" height="6" rx="3" transform="rotate(-45 12 12)"/><path d="M8.5 8.5l7 7"/>',
   activity: '<path d="M3 12h4l2 6 4-14 2 8h6"/>',
   table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/>',
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  moon2: '<path d="M20 14a8 8 0 1 1-10-10 6 6 0 0 0 10 10z"/><path d="M18 4v3M16.5 5.5h3"/>',
+  spark: '<path d="M12 3l1.6 4.9L18.5 9.5 13.6 11 12 16l-1.6-5L5.5 9.5l4.9-1.6z"/><path d="M18 15v4M16 17h4"/>',
+  report: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  upload: '<path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"/>',
 };
 
 const ALIASES = {

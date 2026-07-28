@@ -32,11 +32,10 @@ function toast(msg) {
 
 // ---------- app state ----------
 const state = {
-  tab: 'home',
+  tab: 'input',
   calMonth: startOfDay(new Date()),
   statsPeriod: 'week',
-  settingsRoute: 'root',
-  healthRoute: 'root',
+  diagRoute: 'root',
 };
 let timer = null;
 
@@ -72,51 +71,66 @@ function segmented(group, current, options) {
     `<button data-action="seg" data-group="${group}" data-val="${val}" class="${current === val ? 'on' : ''}">${esc(label)}</button>`).join('')}</div>`;
 }
 
-// ---------- HOME ----------
-function renderHome() {
+// ---------- ВВОД ДАННЫХ (первая вкладка) ----------
+function renderInput() {
   const active = store.activeEpisode();
   const activeAnx = store.activeAnxiety();
   const r = store.computeDay(new Date());
-  const s = store.settings;
 
-  let capture;
+  let activeCard = '';
   if (active) {
-    capture = `
-      <div class="muted center">Идёт эпизод</div>
+    activeCard += `<div class="card stack">
+      <div class="muted center">Идёт эпизод напряжения</div>
       <div class="timer" id="timer">00:00</div>
-      <button class="btn-primary" data-action="finish-episode" data-id="${active.id}">${icon('stop')} Завершить эпизод</button>`;
-  } else {
-    capture = `
-      <div class="muted">Зафиксируйте начало эпизода за пару касаний</div>
-      <button class="btn-primary" data-action="start-episode">${icon('play')} Начался эпизод</button>`;
+      <button class="btn-primary" data-action="finish-episode" data-id="${active.id}">${icon('stop')} Завершить эпизод</button></div>`;
+  }
+  if (activeAnx) {
+    activeCard += `<div class="card row between">
+      <div><div style="font-weight:600">Идёт тревога</div><div class="muted" style="font-size:13px">Открыть и завершить</div></div>
+      <button class="icon-btn round" data-action="open-anxiety">${icon('stop')}</button></div>`;
   }
 
-  const anxietyCard = s.anxietyEnabled ? `
-    <div class="card row between">
-      <div><div style="font-weight:600">${activeAnx ? 'Идёт тревога' : 'Тревога'}</div>
-      <div class="muted" style="font-size:13px">${activeAnx ? 'Открыть и завершить' : 'Зафиксировать тревожный эпизод'}</div></div>
-      <button class="icon-btn round" data-action="open-anxiety">${icon(activeAnx ? 'stop' : 'wind')}</button>
-    </div>` : '';
+  const hint = active || activeAnx ? '' :
+    `<div class="card row between">
+      <div><div style="font-weight:600">Зафиксировать эпизод</div>
+      <div class="muted" style="font-size:13px">Напряжение или тревога — кнопкой «+» справа снизу</div></div>
+      <button class="icon-btn round" data-action="open-capture">${icon('plus')}</button>
+    </div>`;
 
   view.innerHTML = `
-    <h1 class="nav-title">Сегодня</h1>
-    <div class="card stack">${capture}</div>
-    ${anxietyCard}
+    <h1 class="nav-title">Ввод данных</h1>
+    ${activeCard}
+    ${hint}
     <div class="card stack">
       <div class="row between"><div class="section-header">Статус дня</div>${badge(r.status)}</div>
       <div class="muted">${esc(r.textualSummary)}</div>
     </div>
-    <div class="section-header">Сегодня</div>
     <div class="grid2">
       ${metric(r.totalEpisodes, 'эпизодов', 'number')}
       ${metric(formatDuration(r.totalDurationMinutes), 'длительность', 'clock')}
       ${metric(r.maxIntensity > 0 ? r.maxIntensity + '/10' : '—', 'макс. интенсивность', 'gauge')}
       ${metric(r.anxietyCount, 'тревога', 'wind')}
     </div>
+    <div style="height:6px"></div>
+    ${bpSection()}
     <div style="height:8px"></div>
-    <button class="btn-secondary" data-action="add-episode">${icon('plus')} Добавить эпизод задним числом</button>`;
+    ${medsSection()}
+    ${importSection()}
+    <div class="card"><div class="muted" style="font-size:13px">Дневник самонаблюдения. Всё фиксируется для наблюдения и разговора с врачом — это не диагноз и не назначение. Данные хранятся только на устройстве.</div></div>`;
 
   if (active) startTimer(active.startTime);
+}
+
+// Заглушка импортов — подключим в следующих фазах (Daylio, Apple Health, PDF/JPEG).
+function importSection() {
+  return `
+    <div class="section-header">Импорт и загрузка</div>
+    <div class="list">
+      <div class="list-item tappable" data-action="import-soon" data-what="Daylio">${icon('upload')}<span class="grow">Импорт Daylio (.daylio)</span>${icon('chevron.right', 'sm')}</div>
+      <div class="list-item tappable" data-action="import-soon" data-what="Apple Health">${icon('heart')}<span class="grow">Импорт Apple Health</span>${icon('chevron.right', 'sm')}</div>
+      <div class="list-item tappable" data-action="import-soon" data-what="Документы">${icon('table')}<span class="grow">Загрузка JPEG / PDF анамнеза</span>${icon('chevron.right', 'sm')}</div>
+    </div>
+    <div class="muted" style="font-size:12px;margin:6px 4px 10px">Появится в ближайших фазах: разбор бэкапа Daylio, экспорта Apple Health и распознавание документов.</div>`;
 }
 
 function startTimer(startISO) {
@@ -231,13 +245,13 @@ function openDay(date) {
   openSheet(render, { date });
 }
 
-// ---------- STATISTICS ----------
-function renderStats() {
+// ---------- STATISTICS (тело для «Вечер дня») ----------
+function statsBody() {
   const s = statsSummary(state.statsPeriod);
   const periods = [['day', 'День'], ['week', 'Неделя'], ['month', 'Месяц'], ['year', 'Год']];
 
-  view.innerHTML = `
-    <h1 class="nav-title">Статистика</h1>
+  return `
+    <div class="section-header">Статистика</div>
     ${segmented('period', state.statsPeriod, periods)}
     <div style="height:12px"></div>
     <div class="grid2">
@@ -270,17 +284,22 @@ function dayList(title, days) {
   return `<div class="list-head" style="margin-top:6px">${title}</div>${rows || '<div class="muted" style="font-size:13px">Нет данных</div>'}`;
 }
 
-// ---------- SETTINGS ----------
-function renderSettings() {
-  if (state.settingsRoute === 'reasons-headache') return renderReasons('headache');
-  if (state.settingsRoute === 'reasons-anxiety') return renderReasons('anxiety');
-  if (state.settingsRoute === 'thresholds') return renderThresholds();
+// ---------- ДИАГНОСТИКА (отчёты + настройки) ----------
+function renderDiag() {
+  if (state.diagRoute === 'reasons-headache') return renderReasons('headache');
+  if (state.diagRoute === 'reasons-anxiety') return renderReasons('anxiety');
+  if (state.diagRoute === 'thresholds') return renderThresholds();
+  if (state.diagRoute === 'table') return renderHealthTable();
 
   const s = store.settings;
   const toggle = (on, action) => `<div class="toggle ${on ? 'on' : ''}" data-action="${action}"><div class="knob"></div></div>`;
 
   view.innerHTML = `
-    <h1 class="nav-title">Настройки</h1>
+    <h1 class="nav-title">Диагностика</h1>
+    <div class="list-head">Отчёты</div>
+    <div class="list">
+      <div class="list-item tappable" data-action="goto" data-route="table">${icon('table')}<span class="grow">Сводная таблица вмешательств</span>${icon('chevron.right', 'sm')}</div>
+    </div>
     <div class="list-head">Причины</div>
     <div class="list">
       <div class="list-item tappable" data-action="goto" data-route="reasons-headache">${icon('waveform.path')}<span class="grow">Причины напряжения</span>${icon('chevron.right', 'sm')}</div>
@@ -334,7 +353,7 @@ function renderReasons(filter) {
     </div>`).join('');
 
   view.innerHTML = `
-    <div class="row" style="gap:8px;margin:8px 0 16px"><button class="btn-ghost" data-action="back-settings">${icon('chevron.left', 'sm')} Настройки</button></div>
+    <div class="row" style="gap:8px;margin:8px 0 16px"><button class="btn-ghost" data-action="diag-back">${icon('chevron.left', 'sm')} Диагностика</button></div>
     <h1 class="nav-title" style="margin-top:0">${filter === 'headache' ? 'Причины напряжения' : 'Причины тревоги'}</h1>
     <div class="card row" style="gap:8px">
       <input type="text" id="new-reason" placeholder="Новая причина"/>
@@ -348,7 +367,7 @@ function renderThresholds() {
   const t = store.thresholds;
   const item = (field, label, suffix = '') => `<div class="list-item">${label}<span class="spacer"></span>${stepperHtml('th-' + field, t[field], suffix)}</div>`;
   view.innerHTML = `
-    <div class="row" style="gap:8px;margin:8px 0 16px"><button class="btn-ghost" data-action="back-settings">${icon('chevron.left', 'sm')} Настройки</button></div>
+    <div class="row" style="gap:8px;margin:8px 0 16px"><button class="btn-ghost" data-action="diag-back">${icon('chevron.left', 'sm')} Диагностика</button></div>
     <h1 class="nav-title" style="margin-top:0">Пороги оценки</h1>
     <div class="list-head">Короткий и слабый эпизод</div>
     <div class="list">${item('shortEpisodeMinutes', 'Короткий эпизод, мин')}${item('lowIntensity', 'Низкая интенсивность')}</div>
@@ -440,17 +459,43 @@ function saveEpisode() {
 
 // ---------- ANXIETY SHEET ----------
 let anxForm = null;
-function openAnxietySheet(record) {
+function openAnxietySheet(record, presetOngoing = false) {
   if (record) {
     anxForm = { id: record.id, startTime: record.startTime, ongoing: !record.endTime,
       manualMinutes: record.manualDurationMinutes ?? 20, intensity: record.intensity,
       reasonIDs: [...(record.reasonIDs || [])], customReason: record.customReasonText || '',
       notes: record.notes || '', linkedEpisodeID: record.linkedEpisodeID || '', isNew: false };
   } else {
-    anxForm = { id: store.uid(), startTime: new Date().toISOString(), ongoing: false, manualMinutes: 20,
+    anxForm = { id: store.uid(), startTime: new Date().toISOString(), ongoing: presetOngoing, manualMinutes: 20,
       intensity: 3, reasonIDs: [], customReason: '', notes: '', linkedEpisodeID: '', isNew: true };
   }
   openSheet(renderAnxietySheet);
+}
+
+// ---------- ХАБ «+»: выбор эпизода ----------
+function renderCaptureSheet() {
+  const s = store.settings;
+  return `
+    <div class="sheet-head"><div class="title">Зафиксировать эпизод</div>
+      <button class="btn-ghost" data-action="close-sheet">Отмена</button></div>
+    <div class="capture-choice">
+      <div class="capture-card">
+        <h3>${icon('waveform.path', 'sm')} Напряжение</h3>
+        <div class="sub">Головная боль напряжения — таймер сейчас или задним числом.</div>
+        <div class="row">
+          <button class="btn-primary" data-action="cap-episode-now">${icon('play')} Начать сейчас</button>
+          <button class="btn-secondary" data-action="cap-episode-back">Задним числом</button>
+        </div>
+      </div>
+      ${s.anxietyEnabled ? `<div class="capture-card">
+        <h3>${icon('wind', 'sm')} Тревога</h3>
+        <div class="sub">Тревожный эпизод — сейчас или задним числом.</div>
+        <div class="row">
+          <button class="btn-primary" data-action="cap-anxiety-now">${icon('play')} Начать сейчас</button>
+          <button class="btn-secondary" data-action="cap-anxiety-back">Задним числом</button>
+        </div>
+      </div>` : ''}
+    </div>`;
 }
 
 function renderAnxietySheet() {
@@ -519,15 +564,10 @@ function periodText(m) {
   return `${f(m.startDate) || '…'} – ${m.endDate ? f(m.endDate) : 'сейчас'}`;
 }
 
-function renderHealth() {
-  if (state.healthRoute === 'table') return renderHealthTable();
-
+function bpSection() {
   const latest = store.latestBP();
   const bpPoints = store.bpSorted().slice(0, 14).reverse().map((r) => ({ date: r.dateTime, sys: r.sys, dia: r.dia }));
-  const meds = store.medications();
-  const todayIntakes = store.intakesOn(new Date());
-
-  const bpCard = `
+  return `
     <div class="section-header">Давление</div>
     <div class="card stack">
       ${latest ? `
@@ -542,7 +582,11 @@ function renderHealth() {
           <div class="legend" style="margin:0"><span class="li"><span class="dot" style="background:var(--accent)"></span>СИС</span><span class="li"><span class="dot" style="background:var(--accent-soft)"></span>ДИА</span></div></div>
         ${bpChart(bpPoints)}</div>` : ''}
     ${bpRecentList()}`;
+}
 
+function medsSection() {
+  const meds = store.medications();
+  const todayIntakes = store.intakesOn(new Date());
   const medRows = meds.length ? meds.map((m) => {
     const taken = todayIntakes.filter((x) => x.medicationId === m.id && x.taken).length;
     return `<div class="card tight ${m.isActive ? '' : 'dim'}">
@@ -561,18 +605,41 @@ function renderHealth() {
     </div>`;
   }).join('') : '<div class="muted" style="padding:2px 4px 8px">Лекарства пока не добавлены.</div>';
 
-  view.innerHTML = `
-    <h1 class="nav-title">Здоровье</h1>
-    ${bpCard}
-    <div style="height:8px"></div>
-    <div class="section-header">Лекарства</div>
+  return `
+    <div class="section-header">Лекарства — что выпил</div>
     ${medRows}
     <div class="stack" style="margin-top:10px">
       <button class="btn-secondary" data-action="open-med">${icon('plus')} Добавить лекарство</button>
-      <button class="btn-secondary" data-action="open-effect">${icon('activity')} Зафиксировать ощущения</button>
-      <button class="btn-secondary" data-action="health-goto" data-route="table">${icon('table')} Сводная таблица</button>
+    </div>`;
+}
+
+// ---------- ВЕЧЕР ДНЯ (ощущения + статистика) ----------
+function renderEvening() {
+  view.innerHTML = `
+    <h1 class="nav-title">Вечер дня</h1>
+    <div class="section-header">Ощущения и чувства</div>
+    <div class="card stack">
+      <div class="muted">Спокойно дозаполните вечером: ощущения от эпизодов и от препаратов — по шкалам психическое / физическое / неврологическое.</div>
+      <button class="btn-primary" data-action="open-effect">${icon('activity')} Зафиксировать ощущения</button>
     </div>
-    <div class="card"><div class="muted" style="font-size:13px">Дневник самонаблюдения. Давление и препараты фиксируются для наблюдения и разговора с врачом — это не диагноз и не назначение. Данные хранятся только на устройстве.</div></div>`;
+    <div style="height:10px"></div>
+    ${statsBody()}`;
+}
+
+// ---------- AI-АНАЛИТИКА (каркас, наполнение — фаза D) ----------
+function renderAI() {
+  view.innerHTML = `
+    <h1 class="nav-title">AI-аналитика</h1>
+    <div class="card stack">
+      <div class="section-header">${icon('spark', 'sm')} Скоро</div>
+      <div class="muted">Здесь появятся наблюдения и чат с ИИ по вашим данным — через Claude API на вашем ключе, который хранится только на устройстве.</div>
+    </div>
+    <div class="list" style="margin-top:8px">
+      <div class="list-item">${icon('activity')}<span class="grow">Корреляции: тревога · давление · напряжение · препараты</span></div>
+      <div class="list-item">${icon('chat')}<span class="grow">Вопросы к вашей истории и разбор заключений</span></div>
+      <div class="list-item">${icon('table')}<span class="grow">Вопросы к врачу по сводным отчётам</span></div>
+    </div>
+    <div class="card"><div class="muted" style="font-size:13px">ИИ и приложение не ставят диагноз и не назначают лечение. Медицинские данные уходят в API только по вашему согласию. Подключим на фазе D.</div></div>`;
 }
 
 function bpRecentList() {
@@ -613,7 +680,7 @@ function renderHealthTable() {
   }).join('');
 
   view.innerHTML = `
-    <div class="row" style="gap:8px;margin:8px 0 12px"><button class="btn-ghost" data-action="health-back">${icon('chevron.left', 'sm')} Здоровье</button></div>
+    <div class="row" style="gap:8px;margin:8px 0 12px"><button class="btn-ghost" data-action="diag-back">${icon('chevron.left', 'sm')} Диагностика</button></div>
     <h1 class="nav-title" style="margin-top:0">Сводная таблица</h1>
     <div class="muted" style="font-size:13px;margin-bottom:12px">Финальный отчёт по препаратам: назначения врачей, приёмы и ваши ощущения. Это не медицинский документ.</div>
     <div class="table-scroll"><table class="report">
@@ -774,11 +841,11 @@ function closeSheet() { sheetRenderer = null; sheetCtx = null; sheetRoot.innerHT
 // ---------- render dispatch ----------
 function render() {
   if (timer) { clearInterval(timer); timer = null; }
-  if (state.tab === 'home') renderHome();
-  else if (state.tab === 'health') renderHealth();
+  if (state.tab === 'input') renderInput();
+  else if (state.tab === 'evening') renderEvening();
   else if (state.tab === 'calendar') renderCalendar();
-  else if (state.tab === 'stats') renderStats();
-  else renderSettings();
+  else if (state.tab === 'ai') renderAI();
+  else renderDiag();
   syncTabs();
 }
 function syncTabs() {
@@ -789,15 +856,21 @@ function syncTabs() {
 document.addEventListener('click', (e) => {
   const t = e.target.closest('[data-action], .tab');
   if (!t) return;
-  if (t.classList.contains('tab')) { state.tab = t.dataset.tab; state.settingsRoute = 'root'; state.healthRoute = 'root'; render(); return; }
+  if (t.classList.contains('tab')) { state.tab = t.dataset.tab; state.diagRoute = 'root'; render(); return; }
   const a = t.dataset.action;
   const handlers = {
-    'start-episode': () => { store.startEpisode(); },
+    // --- Хаб «+» ---
+    'open-capture': () => openSheet(renderCaptureSheet),
+    'cap-episode-now': () => { closeSheet(); state.tab = 'input'; store.startEpisode(); toast('Эпизод начат'); },
+    'cap-episode-back': () => { closeSheet(); openEpisodeSheet(null); },
+    'cap-anxiety-now': () => { closeSheet(); openAnxietySheet(null, true); },
+    'cap-anxiety-back': () => { closeSheet(); openAnxietySheet(null, false); },
     'finish-episode': () => { store.finishEpisodeNow(t.dataset.id); openEpisodeSheet(store.episodes.find((x) => x.id === t.dataset.id)); },
     'add-episode': () => openEpisodeSheet(null),
     'edit-episode': () => { const ep = store.episodes.find((x) => x.id === t.dataset.id); closeSheet(); openEpisodeSheet(ep); },
     'del-episode': () => { store.deleteEpisode(t.dataset.id); if (sheetCtx?.date) renderSheet(); },
     'open-anxiety': () => openAnxietySheet(store.activeAnxiety()),
+    'import-soon': () => toast(`${t.dataset.what}: скоро, в ближайших фазах`),
     'del-anxiety': () => { store.deleteAnxiety(t.dataset.id); if (sheetCtx?.date) renderSheet(); },
     'save-episode': saveEpisode,
     'save-anxiety': saveAnxiety,
@@ -809,8 +882,8 @@ document.addEventListener('click', (e) => {
     'clear-override': () => { store.setOverride(sheetCtx.date, null); renderSheet(); render(); },
     'close-sheet': closeSheet,
     'backdrop': () => { if (e.target.classList.contains('sheet-backdrop')) closeSheet(); },
-    'goto': () => { state.settingsRoute = t.dataset.route; render(); },
-    'back-settings': () => { state.settingsRoute = 'root'; render(); },
+    'goto': () => { state.diagRoute = t.dataset.route; render(); },
+    'diag-back': () => { state.diagRoute = 'root'; render(); },
     'toggle-anxiety': () => store.setSetting('anxietyEnabled', !store.settings.anxietyEnabled),
     'toggle-override': () => store.setSetting('manualOverrideEnabled', !store.settings.manualOverrideEnabled),
     'toggle-reminder': () => toggleReminder(),
@@ -827,9 +900,7 @@ document.addEventListener('click', (e) => {
     'toggle-reason': () => toggleFormReason(t.dataset.id),
     'seg': () => handleSeg(t.dataset.group, t.dataset.val),
     'step': () => handleStep(t.dataset.field, Number(t.dataset.d)),
-    // --- Здоровье ---
-    'health-goto': () => { state.healthRoute = t.dataset.route; render(); },
-    'health-back': () => { state.healthRoute = 'root'; render(); },
+    // --- Здоровье (давление / лекарства / ощущения) ---
     'open-bp': () => openBPSheet(null),
     'edit-bp': () => openBPSheet(store.bp.find((x) => x.id === t.dataset.id)),
     'del-bp': () => store.deleteBP(t.dataset.id),
@@ -954,7 +1025,7 @@ function scheduleReminderNote() {
 
 // ---------- boot ----------
 function paintTabIcons() {
-  const map = { home: 'home', health: 'heart', calendar: 'calendar', stats: 'stats', settings: 'settings' };
+  const map = { input: 'edit', evening: 'moon2', calendar: 'calendar', ai: 'spark', diag: 'report' };
   document.querySelectorAll('.tab-icon[data-icon]').forEach((el) => {
     el.innerHTML = icon(map[el.dataset.icon] || 'dot');
   });
