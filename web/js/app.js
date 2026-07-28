@@ -3,10 +3,11 @@ import { calculateDay, dayKey, startOfDay, formatDuration } from './calculator.j
 import { STATUSES, STATUS_META, EPISODE_TYPES, DAY_LONG,
   MED_CLASSES, medClassTitle, DOSE_UNITS, BP_CONTEXTS, bpContextTitle,
   EFFECT_GROUPS, SEVERITY } from './defaults.js';
-import { summary as statsSummary } from './stats.js';
+import { summary as statsSummary, moodSummary } from './stats.js';
 import { lineChart, barChart, hourChart, donut, bpChart } from './charts.js';
 import { exportJSON, exportCSV } from './export.js';
 import { icon } from './icons.js';
+import { parseDaylio, MOOD_META } from './daylio.js';
 
 // ---------- helpers ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -121,16 +122,56 @@ function renderInput() {
   if (active) startTimer(active.startTime);
 }
 
-// Заглушка импортов — подключим в следующих фазах (Daylio, Apple Health, PDF/JPEG).
+// Импорт данных: Daylio уже работает; Apple Health и документы — в следующих фазах.
 function importSection() {
+  const d = store.daylio;
+  const daylioRow = d
+    ? `<div class="list-item tappable" data-action="pick-daylio">${icon('check')}<span class="grow">Daylio импортирован · ${d.counts?.entries ?? d.entries.length} записей</span><span class="muted" style="font-size:12px">обновить</span></div>`
+    : `<div class="list-item tappable" data-action="pick-daylio">${icon('upload')}<span class="grow">Импорт Daylio (.daylio)</span>${icon('chevron.right', 'sm')}</div>`;
   return `
     <div class="section-header">Импорт и загрузка</div>
     <div class="list">
-      <div class="list-item tappable" data-action="import-soon" data-what="Daylio">${icon('upload')}<span class="grow">Импорт Daylio (.daylio)</span>${icon('chevron.right', 'sm')}</div>
+      ${daylioRow}
       <div class="list-item tappable" data-action="import-soon" data-what="Apple Health">${icon('heart')}<span class="grow">Импорт Apple Health</span>${icon('chevron.right', 'sm')}</div>
       <div class="list-item tappable" data-action="import-soon" data-what="Документы">${icon('table')}<span class="grow">Загрузка JPEG / PDF анамнеза</span>${icon('chevron.right', 'sm')}</div>
     </div>
-    <div class="muted" style="font-size:12px;margin:6px 4px 10px">Появится в ближайших фазах: разбор бэкапа Daylio, экспорта Apple Health и распознавание документов.</div>`;
+    <div class="muted" style="font-size:12px;margin:6px 4px 10px">Daylio: настроения, маркеры и цели переносятся из бэкапа. Apple Health и распознавание документов — в ближайших фазах.</div>`;
+}
+
+// ---------- Импорт Daylio: разбор → предпросмотр → запись ----------
+let daylioPreview = null;
+async function handleDaylioFile(file) {
+  if (!file) return;
+  toast('Разбираю бэкап…');
+  try {
+    const buf = await file.arrayBuffer();
+    const parsed = await parseDaylio(buf);
+    parsed.counts = parsed.counts || {};
+    daylioPreview = parsed;
+    openSheet(renderDaylioPreview);
+  } catch (err) {
+    toast('Не удалось прочитать: ' + (err?.message || 'ошибка формата'));
+  }
+}
+function renderDaylioPreview() {
+  const p = daylioPreview;
+  if (!p) return '';
+  const c = p.counts;
+  const range = p.entries.length
+    ? `${new Date(p.entries[0].dateTime).toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' })} → ${new Date(p.entries[p.entries.length - 1].dateTime).toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' })}`
+    : '—';
+  return `
+    <div class="sheet-head"><div class="title">Импорт Daylio</div>
+      <button class="btn-ghost" data-action="close-sheet">Отмена</button></div>
+    <div class="muted">Проверьте, что нашлось в бэкапе, и подтвердите перенос.</div>
+    <div class="grid2" style="margin-top:12px">
+      ${metric(c.entries, 'записей', 'calendar')}
+      ${metric(c.markers, 'маркеров', 'stack')}
+      ${metric(c.groups, 'групп', 'sliders')}
+      ${metric(c.goals, 'целей', 'check')}
+    </div>
+    <div class="card" style="margin-top:10px"><div class="muted" style="font-size:13px">Период: ${range}. Триггеры из группы «Триггеры» дополнят ваш список причин без дублей.</div></div>
+    <button class="btn-primary" data-action="confirm-daylio" style="margin-top:14px">${icon('check')} Импортировать</button>`;
 }
 
 function startTimer(startISO) {
@@ -168,8 +209,10 @@ function renderCalendar() {
     const hasData = r.totalEpisodes > 0 || store.isOverridden(date);
     const m = STATUS_META[r.status];
     const ic = hasData ? `<span style="color:${m.color}">${icon(m.icon, 'sm')}</span>` : `<span class="muted">${icon('dot', 'sm')}</span>`;
+    const mood = store.daylioMoodOn(date);
+    const moodDot = mood ? `<span class="mood-dot" style="background:${MOOD_META[mood].color}"></span>` : '';
     cells += `<div class="cal-cell ${dayKey(date) === todayKey ? 'today' : ''}" data-action="open-day" data-date="${date.toISOString()}">
-      <span class="dnum">${d}</span>${ic}</div>`;
+      <span class="dnum">${d}</span>${ic}${moodDot}</div>`;
   }
 
   const legend = STATUSES.map((st) =>
@@ -226,6 +269,25 @@ function openDay(date) {
           <button class="btn-ghost" style="color:var(--danger)" data-action="del-anxiety" data-id="${a.id}">×</button></span>
       </div>`).join('');
 
+    let daylioBlock = '';
+    if (store.hasDaylio()) {
+      const k = dayKey(date);
+      const dayEntries = store.daylio.entries.filter((e) => dayKey(e.dateTime) === k);
+      if (dayEntries.length) {
+        const mood = dayEntries[dayEntries.length - 1].mood;
+        const meta = MOOD_META[mood];
+        const markerNames = [...new Set(dayEntries.flatMap((e) => e.tags))]
+          .map((id) => store.daylioMarkerName(id)).filter(Boolean);
+        const note = dayEntries.map((e) => e.note).filter(Boolean).join(' · ');
+        daylioBlock = `<div class="list-head">Daylio</div>
+          <div class="card tight stack">
+            <div class="row" style="gap:8px;align-items:center"><span class="mood-dot" style="background:${meta.color}"></span><span style="font-weight:600">Настроение: ${meta.title}</span></div>
+            ${markerNames.length ? `<div class="chips">${markerNames.map((n) => `<span class="chip on" style="pointer-events:none">${esc(n)}</span>`).join('')}</div>` : ''}
+            ${note ? `<div class="muted" style="font-size:13px">${esc(note)}</div>` : ''}
+          </div>`;
+      }
+    }
+
     return `
       <div class="sheet-head"><div class="title">${date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}</div>
         <button class="btn-ghost" data-action="close-sheet">Готово</button></div>
@@ -240,7 +302,8 @@ function openDay(date) {
       ${overrideBtns}
       ${eps.length ? `<div class="list-head">Эпизоды</div>${epList}` : ''}
       ${anx.length ? `<div class="list-head">Тревога</div>${anxList}` : ''}
-      ${!eps.length && !anx.length ? '<div class="empty-chart">В этот день записей нет</div>' : ''}`;
+      ${daylioBlock}
+      ${!eps.length && !anx.length && !daylioBlock ? '<div class="empty-chart">В этот день записей нет</div>' : ''}`;
   };
   openSheet(render, { date });
 }
@@ -300,6 +363,7 @@ function renderDiag() {
     <div class="list">
       <div class="list-item tappable" data-action="goto" data-route="table">${icon('table')}<span class="grow">Сводная таблица вмешательств</span>${icon('chevron.right', 'sm')}</div>
     </div>
+    ${daylioDiagSection()}
     <div class="list-head">Причины</div>
     <div class="list">
       <div class="list-item tappable" data-action="goto" data-route="reasons-headache">${icon('waveform.path')}<span class="grow">Причины напряжения</span>${icon('chevron.right', 'sm')}</div>
@@ -332,6 +396,23 @@ function renderDiag() {
     </div>
 
     <div class="card"><div class="muted" style="font-size:13px">Дневник самонаблюдения: фиксация эпизодов, интенсивности, причин и длительности. Это не медицинский инструмент. Все данные хранятся только на вашем устройстве.</div></div>`;
+}
+
+// Обзор импортированного Daylio: цели и группы маркеров (пока только просмотр).
+function daylioDiagSection() {
+  const d = store.daylio;
+  if (!d) return '';
+  const goals = d.goals.filter((g) => (g.name || '').trim())
+    .map((g) => `<div class="row between"><span>${icon('check', 'sm')} ${esc(g.name)}</span></div>`).join('');
+  const groups = d.groups.map((g) => {
+    const n = d.markers.filter((m) => m.groupId === g.id).length;
+    return `<div class="row between"><span>${esc(g.name)}</span><span class="muted" style="font-size:13px">${n}</span></div>`;
+  }).join('');
+  const imported = new Date(d.importedAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' });
+  return `
+    <div class="list-head">Daylio · импортировано ${imported}</div>
+    <div class="card stack"><div class="section-header">Цели (${d.goals.filter((g) => (g.name || '').trim()).length})</div>${goals || '<div class="muted" style="font-size:13px">Нет целей</div>'}</div>
+    <div class="card stack"><div class="section-header">Группы маркеров (${d.groups.length})</div>${groups}</div>`;
 }
 
 function stepperHtml(field, value, suffix = '') {
@@ -623,7 +704,33 @@ function renderEvening() {
       <button class="btn-primary" data-action="open-effect">${icon('activity')} Зафиксировать ощущения</button>
     </div>
     <div style="height:10px"></div>
+    ${moodBody()}
     ${statsBody()}`;
+}
+
+// Настроения и маркеры из Daylio за выбранный период.
+function moodBody() {
+  const m = moodSummary(state.statsPeriod);
+  if (!m) return '';
+  const total = m.dist.reduce((s, v) => s + v, 0);
+  const bars = [1, 2, 3, 4, 5].map((lvl) => {
+    const meta = MOOD_META[lvl];
+    const val = m.dist[lvl];
+    const pct = total ? Math.round((val / total) * 100) : 0;
+    return `<div class="mood-row">
+      <span class="mood-name">${meta.title}</span>
+      <div class="mood-track"><div class="mood-fill" style="width:${pct}%;background:${meta.color}"></div></div>
+      <span class="mood-val">${val}</span></div>`;
+  }).join('');
+  const markers = m.topMarkers.length
+    ? m.topMarkers.map((x) => `<div class="row between"><span>${esc(x.title)}</span><span style="color:var(--accent);font-weight:600">${x.count}</span></div>`).join('')
+    : '<div class="muted" style="font-size:13px">Нет маркеров за период</div>';
+  return `
+    <div class="section-header">Настроение (Daylio)</div>
+    <div class="card stack">
+      ${total ? bars : '<div class="muted" style="font-size:13px">Нет записей настроения за период</div>'}
+    </div>
+    <div class="card stack"><div class="section-header">Частые маркеры</div>${markers}</div>`;
 }
 
 // ---------- AI-АНАЛИТИКА (каркас, наполнение — фаза D) ----------
@@ -871,6 +978,14 @@ document.addEventListener('click', (e) => {
     'del-episode': () => { store.deleteEpisode(t.dataset.id); if (sheetCtx?.date) renderSheet(); },
     'open-anxiety': () => openAnxietySheet(store.activeAnxiety()),
     'import-soon': () => toast(`${t.dataset.what}: скоро, в ближайших фазах`),
+    'pick-daylio': () => { const inp = $('#daylio-file'); if (inp) { inp.value = ''; inp.click(); } },
+    'confirm-daylio': () => {
+      if (!daylioPreview) return;
+      store.importDaylio(daylioPreview);
+      daylioPreview = null;
+      closeSheet();
+      toast('Daylio импортирован');
+    },
     'del-anxiety': () => { store.deleteAnxiety(t.dataset.id); if (sheetCtx?.date) renderSheet(); },
     'save-episode': saveEpisode,
     'save-anxiety': saveAnxiety,
@@ -933,6 +1048,7 @@ document.addEventListener('input', (e) => {
   if (hform) { hform[field] = val; }
 });
 document.addEventListener('change', (e) => {
+  if (e.target.id === 'daylio-file') { handleDaylioFile(e.target.files[0]); return; }
   const r = e.target.closest('[data-action="rename-reason"]');
   if (r) { store.updateReason(r.dataset.id, { title: e.target.value.trim() || 'Без названия' }); return; }
   const sel = e.target.closest('select[data-field]');

@@ -49,6 +49,9 @@
   <!-- Контейнер для модальных листов -->
   <div id="sheet-root"></div>
 
+  <!-- Скрытый выбор файла для импорта Daylio -->
+  <input type="file" id="daylio-file" accept=".daylio,application/zip" hidden />
+
   <script type="module" src="./js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

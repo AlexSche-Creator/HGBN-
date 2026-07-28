@@ -99,6 +99,31 @@ export function summary(period) {
   };
 }
 
+// Статистика настроений и маркеров из импорта Daylio за период.
+export function moodSummary(period) {
+  const d = store.daylio;
+  if (!d) return null;
+  const range = intervalFor(period);
+  const inRange = (iso) => { const t = new Date(iso); return t >= range.start && t < range.end; };
+  const entries = d.entries.filter((e) => inRange(e.dateTime));
+
+  const dist = [0, 0, 0, 0, 0, 0]; // индексы 1..5
+  entries.forEach((e) => { if (e.mood >= 1 && e.mood <= 5) dist[e.mood]++; });
+
+  const counts = {};
+  entries.forEach((e) => (e.tags || []).forEach((id) => { counts[id] = (counts[id] || 0) + 1; }));
+  const nameById = {};
+  d.markers.forEach((m) => { nameById[m.id] = m.name; });
+  const topMarkers = Object.entries(counts)
+    .map(([id, count]) => ({ title: nameById[id] || '—', count }))
+    .filter((x) => x.title !== '—')
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+
+  const avgMood = entries.length ? entries.reduce((s, e) => s + e.mood, 0) / entries.length : 0;
+  return { count: entries.length, dist, topMarkers, avgMood };
+}
+
 function topReasons(ids, limit = 5) {
   const counts = {};
   for (const id of ids) counts[id] = (counts[id] || 0) + 1;

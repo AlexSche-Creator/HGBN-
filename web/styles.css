@@ -204,6 +204,16 @@ label.field { display: block; font-size: 14px; color: var(--text-secondary); mar
 .cal-cell.today { background: var(--accent-tint); }
 .cal-cell .dnum { font-size: 11px; color: var(--text-secondary); }
 .cal-cell.empty { background: transparent; border: none; }
+.mood-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.cal-cell { position: relative; }
+.cal-cell .mood-dot { position: absolute; bottom: 5px; left: 50%; transform: translateX(-50%); }
+
+/* Полосы распределения настроений (Вечер дня) */
+.mood-row { display: grid; grid-template-columns: 68px 1fr 28px; align-items: center; gap: 10px; padding: 4px 0; }
+.mood-name { font-size: 13px; color: var(--text-secondary); }
+.mood-track { height: 10px; border-radius: 5px; background: var(--secondary-bg); overflow: hidden; }
+.mood-fill { height: 100%; border-radius: 5px; min-width: 2px; }
+.mood-val { text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
 
 /* Day detail rows */
 .episode-row { display: flex; flex-direction: column; gap: 4px; }

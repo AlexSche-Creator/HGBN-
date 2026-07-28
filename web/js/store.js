@@ -18,6 +18,7 @@ function defaultData() {
     medications: [], // лекарства
     intakes: [],     // приёмы/пропуски
     effects: [],     // ощущения от приёма
+    daylio: null,    // импорт из Daylio (настроения, маркеры, цели)
     settings: structuredClone(DEFAULT_SETTINGS),
   };
 }
@@ -43,6 +44,7 @@ class Store {
     this.data.medications = this.data.medications || [];
     this.data.intakes = this.data.intakes || [];
     this.data.effects = this.data.effects || [];
+    if (!('daylio' in this.data)) this.data.daylio = null;
     if (!this.data.reasons || !this.data.reasons.length) this.data.reasons = defaultReasons(uid);
     this.applyTheme();
   }
@@ -262,6 +264,48 @@ class Store {
     this.commit();
   }
   deleteEffect(id) { this.data.effects = this.data.effects.filter((e) => e.id !== id); this.commit(); }
+
+  // --- Daylio ---
+  get daylio() { return this.data.daylio; }
+  hasDaylio() { return !!this.data.daylio; }
+  importDaylio(parsed) {
+    this.data.daylio = {
+      version: parsed.version,
+      importedAt: new Date().toISOString(),
+      groups: parsed.groups,
+      markers: parsed.markers,
+      entries: parsed.entries,
+      goals: parsed.goals,
+      goalEntries: parsed.goalEntries,
+    };
+    this.mergeTriggers(parsed.triggerTags || []);
+    this.commit();
+  }
+  // Дополняем текущее разбиение триггеров маркерами из группы «Триггеры» бэкапа (без дублей).
+  mergeTriggers(names) {
+    const existing = new Set(this.data.reasons.map((r) => r.title.trim().toLowerCase()));
+    let order = this.data.reasons.reduce((m, r) => Math.max(m, r.sortOrder), 0);
+    for (const name of names) {
+      const key = (name || '').trim().toLowerCase();
+      if (!key || existing.has(key)) continue;
+      existing.add(key);
+      this.data.reasons.push({
+        id: uid(), title: name.trim(), type: 'both', iconName: 'bolt',
+        isDefault: false, isActive: true, sortOrder: ++order,
+        source: 'daylio', createdAt: new Date().toISOString(),
+      });
+    }
+  }
+  daylioMarkerName(id) { return this.data.daylio?.markers.find((m) => m.id === id)?.name; }
+  // Настроение дня (1=лучшее … 5=худшее) — по последней записи за день.
+  daylioMoodOn(date) {
+    const d = this.data.daylio;
+    if (!d) return null;
+    const k = dayKey(date);
+    const day = d.entries.filter((e) => dayKey(e.dateTime) === k);
+    return day.length ? day[day.length - 1].mood : null;
+  }
+  daylioGoalName(goalId) { return this.data.daylio?.goals.find((g) => g.id === goalId)?.name; }
 
   // --- Сброс ---
   resetEntries() {
