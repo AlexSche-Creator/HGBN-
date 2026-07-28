@@ -13,6 +13,7 @@ import { putDoc, getDoc, deleteDoc, blobToBase64 } from './db.js';
 import * as ai from './ai.js';
 import { parseAppleHealth, HEALTH_METRICS } from './applehealth.js';
 import { seedInterventions, SEED_COUNT } from './seed.js';
+import { buildAIContext, sourceCounts, contextSize, SOURCES, PERIODS, DEFAULT_SCOPE } from './aicontext.js';
 
 // ---------- helpers ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -42,6 +43,7 @@ const state = {
   calMonth: startOfDay(new Date()),
   statsPeriod: 'week',
   diagRoute: 'root',
+  aiRoute: 'root',
 };
 let timer = null;
 
@@ -853,72 +855,127 @@ let aiChat = [];
 let aiResult = '';
 let aiBusy = false;
 function renderAI() {
+  if (state.aiRoute === 'data') return renderAIData();
   const s = store.settings;
-  if (!ai.hasApiKey()) {
-    view.innerHTML = `
-      <h1 class="nav-title">AI-аналитика</h1>
-      <div class="card stack">
-        <div class="section-header">${icon('spark', 'sm')} Нужен ключ Claude API</div>
-        <div class="muted">Наблюдения и чат работают на вашем ключе Anthropic — он хранится только на устройстве. Медицинские данные уходят в API только с вашего согласия.</div>
-        <button class="btn-primary" data-action="goto-ai-key">${icon('settings')} Добавить ключ в «Диагностике»</button>
+  const hasKey = ai.hasApiKey();
+  const ready = hasKey && s.aiConsent;
+  const counts = sourceCounts(store);
+  const scope = s.aiScope || DEFAULT_SCOPE;
+  const onCount = SOURCES.filter(([k]) => scope[k] && counts[k]).length;
+  const size = contextSize(buildAIContext(store, { scope, period: s.aiPeriod || 'month' }));
+
+  const keyCard = hasKey
+    ? `<div class="card row between">
+         <div><div style="font-weight:600">${icon('check', 'sm')} Ключ Claude API добавлен</div>
+         <div class="muted" style="font-size:12px">Хранится только на устройстве</div></div>
+         <button class="btn-ghost" data-action="clear-ai-key" style="color:var(--danger)">Удалить</button>
+       </div>`
+    : `<div class="card stack">
+         <div style="font-weight:600">${icon('spark', 'sm')} Ключ Claude API</div>
+         <div class="muted" style="font-size:13px">Нужен для наблюдений, чата и распознавания документов. Хранится только на устройстве и не входит в экспорт.</div>
+         <div class="row" style="gap:8px">
+           <input type="password" id="ai-key-input" placeholder="sk-ant-…" autocomplete="off"/>
+           <button class="btn-secondary" style="width:auto;padding:12px 16px" data-action="save-ai-key">Сохранить</button>
+         </div>
+       </div>`;
+
+  const consentCard = `
+    <div class="card row between">
+      <div><div style="font-weight:600">Согласие на отправку данных</div>
+      <div class="muted" style="font-size:12px">Без него запросы в API не уходят</div></div>
+      <div class="toggle ${s.aiConsent ? 'on' : ''}" data-action="toggle-consent"><div class="knob"></div></div>
+    </div>`;
+
+  const dataCard = `
+    <div class="card stack tappable" data-action="ai-goto-data">
+      <div class="row between">
+        <div style="font-weight:600">${icon('table', 'sm')} Данные для анализа</div>
+        ${icon('chevron.right', 'sm')}
       </div>
-      <div class="card"><div class="muted" style="font-size:13px">Ключ можно получить в консоли Anthropic. Ничего не отправляется, пока вы не нажмёте «получить наблюдения» и не включите согласие.</div></div>`;
-    return;
-  }
-  const consentCard = s.aiConsent ? '' : `
-    <div class="card stack">
-      <div class="row between"><span style="font-weight:600">Согласие на отправку данных</span>
-        <div class="toggle ${s.aiConsent ? 'on' : ''}" data-action="toggle-consent"><div class="knob"></div></div></div>
-      <div class="muted" style="font-size:13px">Для наблюдений приложение отправит обезличенный срез (эпизоды, давление, приёмы, ощущения) в Claude API. Включите, если согласны.</div>
+      <div class="muted" style="font-size:13px">Источников включено: <strong>${onCount}</strong> · период: <strong>${esc((PERIODS.find(([k]) => k === (s.aiPeriod || 'month')) || [])[1] || '')}</strong> · объём ≈ <strong>${size.kb} КБ</strong></div>
+      <div class="chips">${SOURCES.filter(([k]) => scope[k] && counts[k]).map(([k, l]) => `<span class="chip on" style="pointer-events:none">${l} · ${counts[k]}</span>`).join('') || '<span class="muted" style="font-size:13px">Ничего не выбрано</span>'}</div>
     </div>`;
 
   const chatHtml = aiChat.map((m) => `
     <div class="chat-msg ${m.role}">${esc(m.text).replace(/\n/g, '<br>')}</div>`).join('');
+  const hint = !hasKey ? 'Добавьте ключ выше' : (!s.aiConsent ? 'Включите согласие выше' : 'Ваш вопрос по данным');
 
   view.innerHTML = `
     <h1 class="nav-title">AI-аналитика</h1>
+    ${keyCard}
     ${consentCard}
+    ${dataCard}
     <div class="card stack">
       <div class="section-header">Наблюдения</div>
-      <div class="muted" style="font-size:13px">Корреляции по вашим данным и вопросы к врачу. Не диагноз и не назначение.</div>
-      <button class="btn-primary" data-action="ai-analyze" ${(!s.aiConsent || aiBusy) ? 'disabled style="opacity:.5"' : ''}>${icon('spark')} ${aiBusy ? 'Думаю…' : 'Получить наблюдения'}</button>
+      <div class="muted" style="font-size:13px">Корреляции по выбранным данным и вопросы к врачу. Не диагноз и не назначение.</div>
+      <button class="btn-primary" data-action="ai-analyze" ${(!ready || aiBusy) ? 'disabled style="opacity:.5"' : ''}>${icon('spark')} ${aiBusy ? 'Думаю…' : 'Получить наблюдения'}</button>
       ${aiResult ? `<div class="ai-out">${esc(aiResult).replace(/\n/g, '<br>')}</div>` : ''}
     </div>
     <div class="card stack">
-      <div class="section-header">Чат по вашей истории</div>
-      ${chatHtml || '<div class="muted" style="font-size:13px">Задайте вопрос — модель ответит по вашему срезу данных.</div>'}
+      <div class="section-header">${icon('chat', 'sm')} Чат по вашим данным</div>
+      <div class="chat-log">${chatHtml || '<div class="muted" style="font-size:13px">Спросите что угодно по вашей истории: «когда чаще всего приступы?», «что помогало лучше всего?», «связаны ли сон и напряжение?»</div>'}</div>
       <div class="row" style="gap:8px">
-        <input type="text" id="ai-input" placeholder="Ваш вопрос" ${(!s.aiConsent || aiBusy) ? 'disabled' : ''}/>
-        <button class="btn-secondary" style="width:auto;padding:12px 16px" data-action="ai-send" ${(!s.aiConsent || aiBusy) ? 'disabled style="opacity:.5"' : ''}>${icon('chat', 'sm')}</button>
+        <input type="text" id="ai-input" placeholder="${hint}" ${(!ready || aiBusy) ? 'disabled' : ''}/>
+        <button class="btn-secondary" style="width:auto;padding:12px 16px" data-action="ai-send" ${(!ready || aiBusy) ? 'disabled style="opacity:.5"' : ''}>${icon('chat', 'sm')}</button>
       </div>
+      ${aiChat.length ? `<button class="btn-ghost" data-action="ai-clear-chat">Очистить чат</button>` : ''}
     </div>
-    <div class="card"><div class="muted" style="font-size:12px">Модель извлечения: ${esc(s.aiModelExtract)}, отчёта: ${esc(s.aiModelReport)}. ИИ не ставит диагноз и не назначает лечение.</div></div>`;
+    <div class="card"><div class="muted" style="font-size:12px">Модель распознавания: ${esc(s.aiModelExtract)} · модель отчёта и чата: ${esc(s.aiModelReport)} (меняются в «Диагностике»). ИИ не ставит диагноз и не назначает лечение.</div></div>`;
 }
 
-// Обезличенный срез данных для AI.
+// Окно «Данные для анализа»: что именно доступно и что уйдёт в запрос.
+function renderAIData() {
+  const s = store.settings;
+  const scope = s.aiScope || DEFAULT_SCOPE;
+  const period = s.aiPeriod || 'month';
+  const counts = sourceCounts(store);
+  const ctx = buildAIContext(store, { scope, period });
+  const size = contextSize(ctx);
+
+  const rows = SOURCES.map(([k, label]) => {
+    const n = counts[k];
+    const empty = !n;
+    return `<div class="list-item">
+      <span class="grow" style="${empty ? 'color:var(--text-secondary)' : ''}">${label}
+        <div class="muted" style="font-size:12px">${empty ? 'нет данных' : `доступно: ${n}`}</div></span>
+      <div class="toggle ${scope[k] && !empty ? 'on' : ''} ${empty ? 'dim' : ''}" data-action="toggle-ai-source" data-src="${k}"><div class="knob"></div></div>
+    </div>`;
+  }).join('');
+
+  view.innerHTML = `
+    <div class="row" style="gap:8px;margin:8px 0 12px"><button class="btn-ghost" data-action="ai-back">${icon('chevron.left', 'sm')} AI-аналитика</button></div>
+    <h1 class="nav-title" style="margin-top:0">Данные для анализа</h1>
+    <div class="muted" style="font-size:13px;margin-bottom:12px">Всё, что приложение может отдать модели. Выключите то, что отправлять не хотите — выключенное не попадёт в запрос.</div>
+
+    <div class="list-head">Период</div>
+    ${segmented('aiperiod', period, PERIODS)}
+
+    <div class="list-head" style="margin-top:14px">Источники</div>
+    <div class="list">${rows}</div>
+
+    <div class="card stack" style="margin-top:12px">
+      <div class="row between"><span style="font-weight:600">Объём запроса</span>
+        <span class="muted">${size.kb} КБ · ≈${size.approxTokens.toLocaleString('ru-RU')} токенов</span></div>
+      <div class="muted" style="font-size:12px">Чем больше данных, тем дороже и медленнее запрос. Для узких вопросов достаточно месяца.</div>
+      <button class="btn-secondary" data-action="ai-preview">${icon('eye')} Посмотреть, что уйдёт</button>
+    </div>
+    <div class="card"><div class="muted" style="font-size:12px">Данные уходят в Claude API только при нажатии «Получить наблюдения» или отправке вопроса в чат, и только при включённом согласии.</div></div>`;
+}
+
+function renderAIPreview() {
+  const s = store.settings;
+  const ctx = buildAIContext(store, { scope: s.aiScope || DEFAULT_SCOPE, period: s.aiPeriod || 'month' });
+  return `
+    <div class="sheet-head"><div class="title">Что уйдёт в запрос</div>
+      <button class="btn-ghost" data-action="close-sheet">Готово</button></div>
+    <div class="muted" style="font-size:13px">Точный срез, который получит модель. Ключ и заметки, не входящие в выбранные источники, не отправляются.</div>
+    <pre class="json-preview">${esc(JSON.stringify(ctx, null, 2))}</pre>`;
+}
+
+// Срез для запросов — по выбранным источникам и периоду.
 function aiSnapshot() {
-  const meds = store.medications().map((m) => ({
-    name: m.name, type: m.type, dose: prescriptionText(m), clinic: m.clinic || m.prescribedBy || '',
-    phys: m.physScore || 0, psych: m.psychScore || 0, neuro: m.neuroScore || 0, sum: signedSum(m),
-    sensations: m.sensations || '', active: !!m.isActive,
-  }));
-  const recentBP = store.bpSorted().slice(0, 20).map((r) => ({ date: r.dateTime.slice(0, 10), sys: r.sys, dia: r.dia, pulse: r.pulse, ctx: r.context }));
-  const s = statsSummary('month');
-  const mood = store.hasDaylio() ? moodSummary('month') : null;
-  let health = null;
-  if (store.hasHealth()) {
-    const keys = Object.keys(store.health.days).sort().slice(-14);
-    health = keys.map((k) => ({ date: k, ...store.health.days[k] }));
-  }
-  return {
-    период: 'последний месяц',
-    эпизоды: { всего: s.totalEpisodes, средняя_интенсивность: +s.avgIntensity.toFixed(1), тревога: s.anxietyEpisodes, корреляция_тревога_напряжение: +s.correlation.toFixed(2) },
-    топ_причин: s.topHeadache.map((x) => `${x.title}×${x.count}`),
-    давление: recentBP,
-    вмешательства: meds,
-    настроение: mood ? { записей: mood.count, распределение: mood.dist.slice(1) } : null,
-    apple_health: health,
-  };
+  const s = store.settings;
+  return buildAIContext(store, { scope: s.aiScope || DEFAULT_SCOPE, period: s.aiPeriod || 'month' });
 }
 
 function bpRecentList() {
@@ -1363,7 +1420,7 @@ function syncTabs() {
 document.addEventListener('click', (e) => {
   const t = e.target.closest('[data-action], .tab');
   if (!t) return;
-  if (t.classList.contains('tab')) { state.tab = t.dataset.tab; state.diagRoute = 'root'; render(); return; }
+  if (t.classList.contains('tab')) { state.tab = t.dataset.tab; state.diagRoute = 'root'; state.aiRoute = 'root'; render(); return; }
   const a = t.dataset.action;
   const handlers = {
     // --- Хаб «+» ---
@@ -1397,7 +1454,17 @@ document.addEventListener('click', (e) => {
     'pick-health': () => { const inp = $('#health-file'); if (inp) { inp.value = ''; inp.click(); } },
     'confirm-health': () => { if (healthPreview) { store.importHealth(healthPreview); healthPreview = null; closeSheet(); toast('Apple Health импортирован'); } },
     // --- AI ---
-    'goto-ai-key': () => { state.tab = 'diag'; state.diagRoute = 'root'; render(); },
+    'goto-ai-key': () => { state.tab = 'ai'; state.aiRoute = 'root'; render(); },
+    'ai-goto-data': () => { state.aiRoute = 'data'; render(); },
+    'ai-back': () => { state.aiRoute = 'root'; render(); },
+    'ai-preview': () => openSheet(renderAIPreview),
+    'ai-clear-chat': () => { aiChat = []; render(); },
+    'toggle-ai-source': () => {
+      const k = t.dataset.src;
+      const cur = { ...(store.settings.aiScope || DEFAULT_SCOPE) };
+      cur[k] = !cur[k];
+      store.setSetting('aiScope', cur);
+    },
     'toggle-consent': () => store.setSetting('aiConsent', !store.settings.aiConsent),
     'save-ai-key': () => { const inp = $('#ai-key-input'); if (inp && inp.value.trim()) { ai.setApiKey(inp.value.trim()); toast('Ключ сохранён'); render(); } },
     'clear-ai-key': () => { ai.setApiKey(''); toast('Ключ удалён'); render(); },
@@ -1523,6 +1590,7 @@ function toggleFormReason(id) {
 }
 function handleSeg(group, val) {
   if (group === 'period') { state.statsPeriod = val; render(); return; }
+  if (group === 'aiperiod') { store.setSetting('aiPeriod', val); return; }
   if (group === 'theme') { store.setSetting('theme', val); return; }
   if (sheetIsEpisode()) {
     if (group === 'epType') epForm.type = val;

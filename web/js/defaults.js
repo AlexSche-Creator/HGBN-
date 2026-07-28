@@ -49,6 +49,8 @@ export const DEFAULT_SETTINGS = {
   aiConsent: false, // согласие на отправку мед-данных в AI
   aiModelExtract: 'claude-sonnet-5',
   aiModelReport: 'claude-opus-5',
+  aiPeriod: 'month', // период среза для AI
+  aiScope: null,     // какие источники отдавать (null = все; см. aicontext.js)
   thresholds: { ...DEFAULT_THRESHOLDS },
 };
 

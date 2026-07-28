@@ -366,3 +366,10 @@ table.report tr.hi td { background: color-mix(in srgb, var(--accent) 12%, transp
 .chat-msg { padding: 10px 12px; border-radius: 14px; font-size: 14px; line-height: 1.5; max-width: 88%; }
 .chat-msg.user { background: var(--accent); color: #fff; align-self: flex-end; margin-left: auto; border-bottom-right-radius: 4px; }
 .chat-msg.assistant { background: var(--secondary-bg); align-self: flex-start; border-bottom-left-radius: 4px; }
+.chat-log { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow-y: auto; }
+.json-preview {
+  background: var(--secondary-bg); border-radius: var(--radius-sm); padding: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; line-height: 1.45;
+  white-space: pre; overflow-x: auto; max-height: 60vh; overflow-y: auto; margin: 10px 0 0;
+}
+.toggle.dim { opacity: .4; pointer-events: none; }
