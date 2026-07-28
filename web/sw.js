@@ -1,6 +1,6 @@
 // HGBN service worker — офлайн-first кэш приложения.
 // Бамп версии инвалидирует старый кэш при обновлении ассетов.
-const VERSION = 'hgbn-v3-3';
+const VERSION = 'hgbn-v3-4';
 const ASSETS = [
   './',
   './index.html',
@@ -18,6 +18,7 @@ const ASSETS = [
   './js/db.js',
   './js/ai.js',
   './js/applehealth.js',
+  './js/seed.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-180.png',
@@ -37,20 +38,35 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Cache-first для собственных ассетов; сеть как запасной вариант.
+// Оболочка приложения (HTML/JS/CSS) — сеть вперёд, кэш как запасной вариант:
+// иначе обновление «залипает» и пользователь месяцами видит старую версию.
+// Иконки и прочее — кэш вперёд (они не меняются и экономят трафик).
+const isShell = (url) => /\.(?:html|js|css|webmanifest)$/.test(url.pathname) || url.pathname.endsWith('/');
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request)
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+
+  if (request.mode === 'navigate' || isShell(url)) {
+    event.respondWith(
+      fetch(request)
         .then((response) => {
           const copy = response.clone();
           caches.open(VERSION).then((cache) => cache.put(request, copy)).catch(() => {});
           return response;
         })
-        .catch(() => caches.match('./index.html'));
-    })
+        .catch(() => caches.match(request).then((c) => c || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  event.respondWith(
+    caches.match(request).then((cached) => cached || fetch(request).then((response) => {
+      const copy = response.clone();
+      caches.open(VERSION).then((cache) => cache.put(request, copy)).catch(() => {});
+      return response;
+    }))
   );
 });

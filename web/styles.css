@@ -277,7 +277,30 @@ svg.ic.lg { width: 28px; height: 28px; }
   padding: 8px var(--pad) calc(24px + var(--safe-bottom));
   animation: slideup .22s ease;
 }
-.sheet-handle { width: 40px; height: 5px; border-radius: 3px; background: var(--separator); margin: 8px auto 12px; }
+.sheet-grab { padding: 4px 0 8px; cursor: grab; touch-action: none; }
+.sheet-grab:active { cursor: grabbing; }
+.sheet-handle { width: 40px; height: 5px; border-radius: 3px; background: var(--separator); margin: 8px auto 4px; }
+.sheet-close {
+  position: absolute; top: 12px; right: 14px; z-index: 2;
+  width: 32px; height: 32px; border-radius: 50%; border: none;
+  background: var(--secondary-bg); color: var(--text-secondary);
+  display: grid; place-items: center; cursor: pointer;
+}
+.sheet-close:active { opacity: .7; }
+.sheet { position: relative; }
+
+/* Симметричные карточки запуска (напряжение / тревога) */
+.capture-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.capture-tile {
+  background: var(--card); border: 1px solid var(--separator); border-radius: var(--radius);
+  padding: 14px 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.capture-tile.on { border-color: var(--accent); background: var(--accent-tint); }
+.capture-tile .ct-head { display: flex; align-items: center; gap: 6px; font-weight: 650; font-size: 15px; }
+.capture-tile .ct-sub { font-size: 13px; color: var(--text-secondary); }
+.capture-tile .timer { font-size: 26px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.capture-tile .btn-primary { padding: 12px; font-size: 15px; }
+.capture-tile .ct-back { font-size: 13px; padding: 4px; }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .sheet-head .title { font-size: 18px; font-weight: 700; }
 

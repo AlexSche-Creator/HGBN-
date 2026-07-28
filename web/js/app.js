@@ -12,6 +12,7 @@ import { parseDaylio, MOOD_META } from './daylio.js';
 import { putDoc, getDoc, deleteDoc, blobToBase64 } from './db.js';
 import * as ai from './ai.js';
 import { parseAppleHealth, HEALTH_METRICS } from './applehealth.js';
+import { seedInterventions, SEED_COUNT } from './seed.js';
 
 // ---------- helpers ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -82,30 +83,16 @@ function renderInput() {
   const activeAnx = store.activeAnxiety();
   const r = store.computeDay(new Date());
 
-  let activeCard = '';
-  if (active) {
-    activeCard += `<div class="card stack">
-      <div class="muted center">Идёт эпизод напряжения</div>
-      <div class="timer" id="timer">00:00</div>
-      <button class="btn-primary" data-action="finish-episode" data-id="${active.id}">${icon('stop')} Завершить эпизод</button></div>`;
-  }
-  if (activeAnx) {
-    activeCard += `<div class="card row between">
-      <div><div style="font-weight:600">Идёт тревога</div><div class="muted" style="font-size:13px">Открыть и завершить</div></div>
-      <button class="icon-btn round" data-action="open-anxiety">${icon('stop')}</button></div>`;
-  }
-
-  const hint = active || activeAnx ? '' :
-    `<div class="card row between">
-      <div><div style="font-weight:600">Зафиксировать эпизод</div>
-      <div class="muted" style="font-size:13px">Напряжение или тревога — кнопкой «+» справа снизу</div></div>
-      <button class="icon-btn round" data-action="open-capture">${icon('plus')}</button>
+  const s = store.settings;
+  const capture = `
+    <div class="capture-grid">
+      ${captureCard('headache', 'Напряжение', 'waveform.path', active)}
+      ${s.anxietyEnabled ? captureCard('anxiety', 'Тревога', 'wind', activeAnx) : ''}
     </div>`;
 
   view.innerHTML = `
     <h1 class="nav-title">Ввод данных</h1>
-    ${activeCard}
-    ${hint}
+    ${capture}
     <div class="card stack">
       <div class="row between"><div class="section-header">Статус дня</div>${badge(r.status)}</div>
       <div class="muted">${esc(r.textualSummary)}</div>
@@ -123,7 +110,21 @@ function renderInput() {
     ${importSection()}
     <div class="card"><div class="muted" style="font-size:13px">Дневник самонаблюдения. Всё фиксируется для наблюдения и разговора с врачом — это не диагноз и не назначение. Данные хранятся только на устройстве.</div></div>`;
 
-  if (active) startTimer(active.startTime);
+  startTimers();
+}
+
+// Одинаковая карточка запуска для напряжения и тревоги.
+function captureCard(kind, title, iconName, activeRec) {
+  const running = !!activeRec;
+  return `<div class="capture-tile ${running ? 'on' : ''}">
+    <div class="ct-head">${icon(iconName, 'sm')} <span>${title}</span></div>
+    ${running
+      ? `<div class="timer" data-timer-start="${activeRec.startTime}">00:00</div>
+         <button class="btn-primary" data-action="${kind === 'headache' ? 'finish-episode' : 'finish-anxiety'}" data-id="${activeRec.id}">${icon('stop')} Завершить</button>`
+      : `<div class="ct-sub">Не идёт</div>
+         <button class="btn-primary" data-action="${kind === 'headache' ? 'cap-episode-now' : 'cap-anxiety-now'}">${icon('play')} Начать</button>`}
+    <button class="btn-ghost ct-back" data-action="${kind === 'headache' ? 'cap-episode-back' : 'cap-anxiety-back'}">Задним числом</button>
+  </div>`;
 }
 
 // Импорт данных: Daylio уже работает; Apple Health и документы — в следующих фазах.
@@ -137,19 +138,29 @@ function importSection() {
     ? `<div class="list-item tappable" data-action="pick-health">${icon('check')}<span class="grow">Apple Health · ${h.counts?.days ?? Object.keys(h.days).length} дней</span><span class="muted" style="font-size:12px">обновить</span></div>`
     : `<div class="list-item tappable" data-action="pick-health">${icon('heart')}<span class="grow">Импорт Apple Health (ZIP)</span>${icon('chevron.right', 'sm')}</div>`;
   return `
-    <div class="section-header">Импорт и загрузка</div>
+    ${documentsSection()}
+    <div class="section-header">Импорт истории</div>
     <div class="list">
       ${daylioRow}
       ${healthRow}
-      <div class="list-item tappable" data-action="pick-doc">${icon('upload')}<span class="grow">Загрузить JPEG / PDF анамнеза</span>${icon('chevron.right', 'sm')}</div>
     </div>
-    ${documentsSection()}
-    <div class="muted" style="font-size:12px;margin:6px 4px 10px">Daylio и Apple Health переносятся из выгрузок. Документы распознаёт AI (Диагностика → AI-ключ), нормализуя отчёт по первичным документам с печатями.</div>`;
+    <div class="muted" style="font-size:12px;margin:6px 4px 10px">Daylio и Apple Health переносятся из выгрузок.</div>`;
 }
 
+// Загрузка документов — заметный блок, а не строка в списке.
 function documentsSection() {
   const docs = store.documents();
-  if (!docs.length) return '';
+  return `
+    <div class="section-header">Документы: анамнезы, заключения, назначения</div>
+    <div class="card stack">
+      <div class="muted" style="font-size:13px">Сфотографируйте или выберите <strong>JPEG / PDF</strong>. Нейросеть распознает наименование, дозу, частоту и клинику и дополнит отчёт. Первичный документ с печатью перекрывает данные в отчёте.</div>
+      <button class="btn-primary" data-action="pick-doc">${icon('camera')} Загрузить JPEG / PDF</button>
+      ${ai.hasApiKey() ? '' : '<div class="muted" style="font-size:12px">Для распознавания добавьте AI-ключ в «Диагностике». Загружать и хранить документы можно и без него.</div>'}
+    </div>
+    ${docs.length ? docsList(docs) : ''}`;
+}
+
+function docsList(docs) {
   const rows = docs.map((d) => {
     const kind = d.mediaType === 'application/pdf' ? 'PDF' : 'JPEG';
     const status = d.parsed ? `<span class="badge">${icon('check', 'sm')} распознан</span>` : '';
@@ -166,7 +177,7 @@ function documentsSection() {
       </div>
     </div>`;
   }).join('');
-  return `<div class="section-header">Документы</div>${rows}`;
+  return `<div class="list-head">Загружено (${docs.length})</div>${rows}`;
 }
 
 // ---------- Импорт Daylio: разбор → предпросмотр → запись ----------
@@ -205,20 +216,21 @@ function renderDaylioPreview() {
     <button class="btn-primary" data-action="confirm-daylio" style="margin-top:14px">${icon('check')} Импортировать</button>`;
 }
 
-function startTimer(startISO) {
-  const elapsed = () => {
+// Тикают все элементы с data-timer-start (напряжение и тревога одновременно).
+function startTimers() {
+  const fmt = (startISO) => {
     const total = Math.max(0, Math.floor((Date.now() - new Date(startISO)) / 1000));
     const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), sec = total % 60;
     const pad = (n) => String(n).padStart(2, '0');
     return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
   };
-  const elm = $('#timer');
-  if (elm) elm.textContent = elapsed();
-  timer = setInterval(() => {
-    const e = $('#timer');
-    if (!e) { clearInterval(timer); return; }
-    e.textContent = elapsed();
-  }, 1000);
+  const tick = () => {
+    const els = document.querySelectorAll('[data-timer-start]');
+    if (!els.length) { clearInterval(timer); timer = null; return; }
+    els.forEach((e) => { e.textContent = fmt(e.dataset.timerStart); });
+  };
+  tick();
+  if (document.querySelector('[data-timer-start]')) timer = setInterval(tick, 1000);
 }
 
 // ---------- CALENDAR ----------
@@ -947,7 +959,7 @@ function renderHealthTable() {
     const sum = signedSum(m);
     return `<tr class="${m.highlighted ? 'hi' : ''}">
       <td class="num">${i + 1}</td>
-      <td>${prov}${esc(m.name)}${m.isActive ? '' : ' <span class="muted">(неактивно)</span>'}</td>
+      <td>${prov}${esc(m.name)}</td>
       <td>${esc(prescriptionText(m))}</td>
       <td>${esc(m.clinic || m.prescribedBy || '—')}</td>
       <td class="num">${esc(m.year || (m.startDate ? m.startDate.slice(0, 4) : '—'))}</td>
@@ -961,11 +973,20 @@ function renderHealthTable() {
     <div class="row" style="gap:8px;margin:8px 0 12px"><button class="btn-ghost" data-action="diag-back">${icon('chevron.left', 'sm')} Диагностика</button></div>
     <h1 class="nav-title" style="margin-top:0">Сводная таблица вмешательств</h1>
     <div class="muted" style="font-size:13px;margin-bottom:12px">Наименование · назначение врача (доза/частота) · клиника · год · знаковое действие (−10…+10) · ощущения. ${icon('check', 'sm')} — поле подтверждено первичным документом с печатью. Это не медицинский документ.</div>
+    ${meds.length ? '' : `<div class="card stack">
+      <div style="font-weight:600">Отчёт пуст</div>
+      <div class="muted" style="font-size:13px">Можно перенести вашу бумажную таблицу вмешательств (${SEED_COUNT} строк: наименование, клиника, год, оценки, ощущения) одним нажатием, а затем править и дополнять распознаванием документов.</div>
+      <button class="btn-primary" data-action="seed-report">${icon('table')} Заполнить из моей таблицы</button>
+    </div>`}
     <div class="table-scroll"><table class="report">
       <thead><tr><th>№</th><th>Наименование</th><th>Назначение врача</th><th>Клиника</th><th>Год</th><th>Физ.</th><th>Псих.</th><th>Невр.</th><th>Сумма</th><th>Ощущения</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="10" class="muted" style="text-align:center;padding:16px">Нет данных — добавьте вмешательство</td></tr>'}</tbody>
+      <tbody>${rows || '<tr><td colspan="10" class="muted" style="text-align:center;padding:16px">Нет данных</td></tr>'}</tbody>
     </table></div>
-    <div class="muted" style="font-size:12px;margin-top:10px;padding:0 4px">Столбцы дополняются распознаванием PDF/фото заключений — на вкладке «Ввод данных» → документы.</div>`;
+    <div class="row" style="gap:8px;margin-top:10px">
+      <button class="btn-secondary" data-action="open-med">${icon('plus')} Добавить строку</button>
+      ${meds.length ? `<button class="btn-secondary" data-action="seed-report">${icon('table')} Дозаполнить из таблицы</button>` : ''}
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:10px;padding:0 4px">Столбцы дополняются распознаванием PDF/фото заключений — на вкладке «Ввод данных» → «Документы». Тап по строке в списке лекарств («Ввод данных») открывает её для правки.</div>`;
 }
 
 // ---------- BP SHEET ----------
@@ -1278,8 +1299,45 @@ let sheetRenderer = null;
 let sheetCtx = null;
 function openSheet(renderer, ctx = null) {
   sheetRenderer = renderer; sheetCtx = ctx;
-  sheetRoot.innerHTML = `<div class="sheet-backdrop" data-action="backdrop"><div class="sheet"><div class="sheet-handle"></div><div id="sheet-body"></div></div></div>`;
+  sheetRoot.innerHTML = `<div class="sheet-backdrop" data-action="backdrop">
+    <div class="sheet">
+      <div class="sheet-grab"><div class="sheet-handle"></div></div>
+      <button class="sheet-close" data-action="close-sheet" aria-label="Закрыть">${icon('close', 'sm')}</button>
+      <div id="sheet-body"></div>
+    </div></div>`;
   renderSheet();
+  attachSwipeToClose();
+}
+
+// Смахивание листа вниз для закрытия (без заполнения формы).
+function attachSwipeToClose() {
+  const sheet = sheetRoot.querySelector('.sheet');
+  const grab = sheetRoot.querySelector('.sheet-grab');
+  if (!sheet || !grab) return;
+  let y0 = null, dy = 0;
+  const start = (e) => { y0 = (e.touches ? e.touches[0] : e).clientY; dy = 0; sheet.style.transition = 'none'; };
+  const move = (e) => {
+    if (y0 == null) return;
+    dy = Math.max(0, ((e.touches ? e.touches[0] : e).clientY) - y0);
+    sheet.style.transform = `translateY(${dy}px)`;
+    if (e.cancelable) e.preventDefault();
+  };
+  const end = () => {
+    if (y0 == null) return;
+    sheet.style.transition = '';
+    if (dy > 90) { closeSheet(); } else { sheet.style.transform = ''; }
+    y0 = null;
+  };
+  // Тянуть можно за «ручку» вверху — не мешает прокрутке содержимого.
+  grab.addEventListener('touchstart', start, { passive: true });
+  grab.addEventListener('touchmove', move, { passive: false });
+  grab.addEventListener('touchend', end);
+  grab.addEventListener('mousedown', (e) => {
+    start(e);
+    const mm = (ev) => move(ev);
+    const mu = () => { end(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); };
+    document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu);
+  });
 }
 function renderSheet() {
   const body = $('#sheet-body');
@@ -1310,11 +1368,12 @@ document.addEventListener('click', (e) => {
   const handlers = {
     // --- Хаб «+» ---
     'open-capture': () => openSheet(renderCaptureSheet),
-    'cap-episode-now': () => { closeSheet(); state.tab = 'input'; store.startEpisode(); toast('Эпизод начат'); },
+    'cap-episode-now': () => { closeSheet(); state.tab = 'input'; store.startEpisode(); toast('Напряжение начато'); },
     'cap-episode-back': () => { closeSheet(); openEpisodeSheet(null); },
-    'cap-anxiety-now': () => { closeSheet(); openAnxietySheet(null, true); },
+    'cap-anxiety-now': () => { closeSheet(); state.tab = 'input'; store.startAnxiety(); toast('Тревога начата'); },
     'cap-anxiety-back': () => { closeSheet(); openAnxietySheet(null, false); },
     'finish-episode': () => { store.finishEpisodeNow(t.dataset.id); openEpisodeSheet(store.episodes.find((x) => x.id === t.dataset.id)); },
+    'finish-anxiety': () => { store.finishAnxietyNow(t.dataset.id); openAnxietySheet(store.anxiety.find((x) => x.id === t.dataset.id)); },
     'add-episode': () => openEpisodeSheet(null),
     'edit-episode': () => { const ep = store.episodes.find((x) => x.id === t.dataset.id); closeSheet(); openEpisodeSheet(ep); },
     'del-episode': () => { store.deleteEpisode(t.dataset.id); if (sheetCtx?.date) renderSheet(); },
@@ -1330,6 +1389,10 @@ document.addEventListener('click', (e) => {
       catch { toast('Не удалось открыть'); }
     },
     'apply-extract': applyExtraction,
+    'seed-report': () => {
+      const r = seedInterventions(store);
+      toast(r.added ? `Добавлено строк: ${r.added}${r.skipped ? `, пропущено дублей: ${r.skipped}` : ''}` : 'Все строки уже в отчёте');
+    },
     // --- Apple Health ---
     'pick-health': () => { const inp = $('#health-file'); if (inp) { inp.value = ''; inp.click(); } },
     'confirm-health': () => { if (healthPreview) { store.importHealth(healthPreview); healthPreview = null; closeSheet(); toast('Apple Health импортирован'); } },

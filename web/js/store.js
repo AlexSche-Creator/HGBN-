@@ -165,6 +165,21 @@ class Store {
       .filter((a) => dayKey(a.startTime) === k)
       .sort((x, y) => new Date(x.startTime) - new Date(y.startTime));
   }
+  // Старт тревоги «в моменте» — симметрично startEpisode().
+  startAnxiety() {
+    const now = new Date().toISOString();
+    this.data.anxiety.push({
+      id: uid(), startTime: now, endTime: null, manualDurationMinutes: null,
+      intensity: 3, reasonIDs: [], customReasonText: null, notes: null,
+      linkedEpisodeID: null, createdAt: now, updatedAt: now,
+    });
+    this.commit();
+  }
+  finishAnxietyNow(id) {
+    const a = this.data.anxiety.find((x) => x.id === id);
+    if (a) { a.endTime = new Date().toISOString(); a.updatedAt = a.endTime; this.commit(); }
+    return a;
+  }
   upsertAnxiety(rec) {
     const i = this.data.anxiety.findIndex((x) => x.id === rec.id);
     rec.updatedAt = new Date().toISOString();
