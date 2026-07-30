@@ -58,6 +58,7 @@ const PATHS = {
   report: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
   upload: '<path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  'chevron.down': '<path d="M5 9l7 7 7-7"/>',
   camera: '<path d="M3 8h3l2-3h8l2 3h3v12H3z"/><circle cx="12" cy="13" r="4"/>',
 };
 

@@ -373,3 +373,14 @@ table.report tr.hi td { background: color-mix(in srgb, var(--accent) 12%, transp
   white-space: pre; overflow-x: auto; max-height: 60vh; overflow-y: auto; margin: 10px 0 0;
 }
 .toggle.dim { opacity: .4; pointer-events: none; }
+
+/* Вечерняя проводка: группы маркеров и выбор настроения */
+.mgroup { border-top: 1px solid var(--separator); padding-top: 8px; margin-top: 8px; }
+.mgroup:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+.mgroup-head { display: flex; align-items: center; gap: 8px; padding: 8px 0; cursor: pointer; font-weight: 600; font-size: 14px; }
+.mood-pick { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.mood-btn {
+  border: 1px solid var(--separator); background: var(--card); color: var(--text-secondary);
+  border-radius: var(--radius-sm); padding: 10px 2px; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.mood-btn.on { background: var(--mc); border-color: var(--mc); color: #fff; }

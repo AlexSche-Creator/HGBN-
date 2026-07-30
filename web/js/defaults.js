@@ -44,8 +44,9 @@ export const DEFAULT_SETTINGS = {
   anxietyEnabled: true,
   manualOverrideEnabled: true,
   theme: 'system', // system | light | dark
-  reminderEnabled: false,
+  reminderEnabled: true,
   reminderHour: 21,
+  reminderMinute: 21, // вечерняя проводка в 21:21
   aiConsent: false, // согласие на отправку мед-данных в AI
   aiModelExtract: 'claude-sonnet-5',
   aiModelReport: 'claude-opus-5',
@@ -190,6 +191,19 @@ export const INTERVENTION_TYPES = [
 export function interventionTypeTitle(key) {
   return (INTERVENTION_TYPES.find(([k]) => k === key) || [null, 'Препарат'])[1];
 }
+
+// ---------- Вечерняя проводка: «итог дня по эпизодам» (как в Daylio) ----------
+export const DAY_DURATION = [
+  ['none', 'не было'], ['m15', '15 мин'], ['m30', '30 мин'],
+  ['h1', '1 час'], ['h2', '2 часа'], ['h4', '4 часа'], ['allday', 'весь день'],
+];
+export const DAY_STRENGTH = [
+  ['none', 'нет'], ['s1', '1 балл'], ['s2', '2 балла'],
+  ['s3', '3 балла'], ['s5', '5 баллов'], ['s10', '10 баллов'],
+];
+export const DAY_FREQUENCY = [
+  ['f0', '0'], ['f1', '1'], ['f2', '2'], ['f3', '3'], ['f5', '>5'],
+];
 
 // Знаковая шкала действия −10…+10 по трём измерениям; сумма = эффективность.
 export const SIGNED_AXES = [

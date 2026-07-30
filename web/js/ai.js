@@ -87,6 +87,40 @@ export async function extractDocument({ base64, mediaType, model }) {
   return JSON.parse(textOf(resp));
 }
 
+// ---------- Распознавание показаний тонометра по фото ----------
+const BP_SCHEMA = {
+  type: 'object',
+  properties: {
+    sys: { type: 'integer' },
+    dia: { type: 'integer' },
+    pulse: { type: ['integer', 'null'] },
+    confident: { type: 'boolean' },
+  },
+  required: ['sys', 'dia', 'pulse', 'confident'],
+  additionalProperties: false,
+};
+
+export async function extractBloodPressure({ base64, mediaType, model }) {
+  const resp = await call({
+    model: model || DEFAULT_MODEL_EXTRACT,
+    max_tokens: 300,
+    system: SAFETY + ' Верни только JSON по схеме.',
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: mediaType || 'image/jpeg', data: base64 } },
+        { type: 'text', text: 'На фото экран тонометра. Считай три показателя: sys — верхнее (систолическое) давление, '
+          + 'dia — нижнее (диастолическое), pulse — пульс. Обычно они расположены сверху вниз именно в этом порядке; '
+          + 'sys всегда больше dia. Если пульса на экране нет — верни null. '
+          + 'confident = false, если цифры плохо видны или ты не уверен. Ничего не выдумывай.' },
+      ],
+    }],
+    output_config: { format: { type: 'json_schema', schema: BP_SCHEMA } },
+  });
+  if (resp.stop_reason === 'refusal') throw new Error('Модель отклонила обработку фото.');
+  return JSON.parse(textOf(resp));
+}
+
 // ---------- Наблюдения по срезу данных ----------
 export async function analyze({ snapshot, model }) {
   const resp = await call({

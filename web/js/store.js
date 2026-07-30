@@ -18,6 +18,7 @@ function defaultData() {
     medications: [], // лекарства
     intakes: [],     // приёмы/пропуски
     effects: [],     // ощущения от приёма
+    dayLogs: [],     // вечерние проводки: итог дня по эпизодам, триггеры, маркеры, настроение
     documents: [],   // метаданные загруженных PDF/JPEG (блобы — в IndexedDB)
     daylio: null,    // импорт из Daylio (настроения, маркеры, цели)
     health: null,    // импорт Apple Health (дневные метрики)
@@ -46,6 +47,7 @@ class Store {
     this.data.medications = this.data.medications || [];
     this.data.intakes = this.data.intakes || [];
     this.data.effects = this.data.effects || [];
+    this.data.dayLogs = this.data.dayLogs || [];
     this.data.documents = this.data.documents || [];
     if (!('daylio' in this.data)) this.data.daylio = null;
     if (!('health' in this.data)) this.data.health = null;
@@ -282,6 +284,27 @@ class Store {
   effectsSorted() { return [...this.data.effects].sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime)); }
   effectsFor(medicationId) { return this.effectsSorted().filter((e) => e.medicationId === medicationId); }
   latestEffectFor(medicationId) { return this.effectsFor(medicationId)[0] || null; }
+  effectsOn(date) {
+    const k = dayKey(date);
+    return this.effectsSorted().filter((e) => dayKey(e.dateTime) === k);
+  }
+  // Вечерняя оценка препарата за конкретный день (одна на пару препарат+день).
+  effectFor(medicationId, date) {
+    return this.effectsOn(date).find((e) => e.medicationId === medicationId) || null;
+  }
+  // Живой рейтинг по знаковым оценкам из вечерних проводок.
+  medRating(medicationId) {
+    const xs = this.effectsFor(medicationId).filter((e) => e.physScore != null || e.psychScore != null || e.neuroScore != null);
+    if (!xs.length) return null;
+    const avg = (f) => xs.reduce((s, e) => s + (Number(e[f]) || 0), 0) / xs.length;
+    const phys = avg('physScore'), psych = avg('psychScore'), neuro = avg('neuroScore');
+    return {
+      n: xs.length,
+      phys: Math.round(phys), psych: Math.round(psych), neuro: Math.round(neuro),
+      sum: Math.round(phys + psych + neuro),
+      lastAt: xs[0].dateTime,
+    };
+  }
   upsertEffect(e) {
     const i = this.data.effects.findIndex((x) => x.id === e.id);
     if (i >= 0) this.data.effects[i] = e; else this.data.effects.push(e);
@@ -330,6 +353,44 @@ class Store {
     return day.length ? day[day.length - 1].mood : null;
   }
   daylioGoalName(goalId) { return this.data.daylio?.goals.find((g) => g.id === goalId)?.name; }
+
+  // --- Вечерняя проводка (одна на день) ---
+  dayLogKey(date) {
+    const d = new Date(date); const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+  dayLog(date) { return this.data.dayLogs.find((l) => l.date === this.dayLogKey(date)) || null; }
+  get dayLogs() { return this.data.dayLogs; }
+  saveDayLog(date, patch) {
+    const key = this.dayLogKey(date);
+    const i = this.data.dayLogs.findIndex((l) => l.date === key);
+    const now = new Date().toISOString();
+    if (i >= 0) this.data.dayLogs[i] = { ...this.data.dayLogs[i], ...patch, updatedAt: now };
+    else this.data.dayLogs.push({ id: uid(), date: key, createdAt: now, updatedAt: now, ...patch });
+    this.commit();
+  }
+  deleteDayLog(date) {
+    const key = this.dayLogKey(date);
+    this.data.dayLogs = this.data.dayLogs.filter((l) => l.date !== key);
+    this.commit();
+  }
+
+  // --- Курс приёма вмешательства ---
+  startCourse(id) {
+    const m = this.medication(id);
+    if (!m) return;
+    m.isActive = true;
+    if (!m.startDate) m.startDate = new Date().toISOString().slice(0, 10);
+    m.endDate = '';
+    this.commit();
+  }
+  stopCourse(id) {
+    const m = this.medication(id);
+    if (!m) return;
+    m.isActive = false;
+    m.endDate = new Date().toISOString().slice(0, 10);
+    this.commit();
+  }
 
   // --- Документы (метаданные; блобы — в IndexedDB) ---
   documents() { return [...this.data.documents].sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt)); }

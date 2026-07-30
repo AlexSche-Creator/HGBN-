@@ -3,7 +3,7 @@ import { calculateDay, dayKey, startOfDay, formatDuration } from './calculator.j
 import { STATUSES, STATUS_META, EPISODE_TYPES, DAY_LONG,
   MED_CLASSES, medClassTitle, DOSE_UNITS, BP_CONTEXTS, bpContextTitle,
   EFFECT_GROUPS, SEVERITY, INTERVENTION_TYPES, interventionTypeTitle,
-  SIGNED_AXES, signedSum } from './defaults.js';
+  SIGNED_AXES, signedSum, DAY_DURATION, DAY_STRENGTH, DAY_FREQUENCY } from './defaults.js';
 import { summary as statsSummary, moodSummary } from './stats.js';
 import { lineChart, barChart, hourChart, donut, bpChart } from './charts.js';
 import { exportJSON, exportCSV } from './export.js';
@@ -44,7 +44,20 @@ const state = {
   statsPeriod: 'week',
   diagRoute: 'root',
   aiRoute: 'root',
+  eveningRoute: 'root',
+  eveningDate: null,      // null = сегодня
+  openGroups: new Set(),  // раскрытые группы маркеров в проводке
 };
+const eveningDate = () => (state.eveningDate ? new Date(state.eveningDate) : new Date());
+// Черновик вечерней проводки — до нажатия «Закрыть день».
+let dayDraft = null;
+function draft(date) {
+  const key = store.dayLogKey(date);
+  if (!dayDraft || dayDraft._key !== key) {
+    dayDraft = { _key: key, ...(store.dayLog(date) || {}) };
+  }
+  return dayDraft;
+}
 let timer = null;
 
 // ---------- components ----------
@@ -434,8 +447,9 @@ function renderDiag() {
     <div class="list-head">Отслеживание</div>
     <div class="list">
       <div class="list-item">${icon('wind')}<span class="grow">Отслеживать тревогу</span>${toggle(s.anxietyEnabled, 'toggle-anxiety')}</div>
-      <div class="list-item">${icon('clock')}<span class="grow">Вечернее напоминание</span>${toggle(s.reminderEnabled, 'toggle-reminder')}</div>
-      ${s.reminderEnabled ? `<div class="list-item">${icon('timer')}<span class="grow">Время напоминания</span>${stepperHtml('reminderHour', s.reminderHour, ':00')}</div>` : ''}
+      <div class="list-item">${icon('clock')}<span class="grow">Напоминание о вечерней проводке</span>${toggle(s.reminderEnabled, 'toggle-reminder')}</div>
+      ${s.reminderEnabled ? `<div class="list-item">${icon('timer')}<span class="grow">Время</span>
+        <input type="time" data-field="reminderTime" value="${String(s.reminderHour).padStart(2, '0')}:${String(s.reminderMinute ?? 21).padStart(2, '0')}" style="width:120px"/></div>` : ''}
     </div>
 
     <div class="list-head">Оформление</div>
@@ -581,7 +595,7 @@ function renderThresholds() {
 
 // ---------- EPISODE SHEET ----------
 let epForm = null;
-function openEpisodeSheet(episode) {
+function openEpisodeSheet(episode, opts = {}) {
   if (episode) {
     epForm = {
       id: episode.id, type: episode.type, startTime: episode.startTime,
@@ -597,7 +611,11 @@ function openEpisodeSheet(episode) {
     epForm = { id: store.uid(), type: 'headache', startTime: now, endTime: now, durMode: 'byEnd',
       manualMinutes: 15, dayLongFlag: 'almostAllDay', intensity: 3, reasonIDs: [], customReason: '', notes: '', isNew: true };
   }
-  openSheet(renderEpisodeSheet);
+  epForm.discardId = opts.discardId || null;
+  // Смахнули/закрыли без сохранения → запись, созданную таймером, убираем.
+  openSheet(renderEpisodeSheet, opts.discardId
+    ? { onDismiss: () => { store.deleteEpisode(opts.discardId); toast('Эпизод не сохранён'); } }
+    : null);
 }
 
 function renderEpisodeSheet() {
@@ -626,7 +644,10 @@ function renderEpisodeSheet() {
     <div class="card">${reasonChips(f.type, f.reasonIDs)}
       <div style="height:10px"></div><input type="text" placeholder="Своя причина" data-field="customReason" value="${esc(f.customReason)}"/></div>
     <div class="field-row"><label class="field">Заметка</label><textarea data-field="notes" placeholder="Комментарий">${esc(f.notes)}</textarea></div>
-    <button class="btn-primary" data-action="save-episode">${icon('check')} Сохранить</button>`;
+    <button class="btn-primary" data-action="save-episode">${icon('check')} Сохранить</button>
+    ${f.discardId
+      ? `<button class="btn-secondary" style="color:var(--danger);margin-top:10px" data-action="discard-episode" data-id="${f.discardId}">${icon('trash', 'sm')} Не записывать этот эпизод</button>`
+      : `<button class="btn-secondary" style="margin-top:10px" data-action="cancel-sheet">Отмена</button>`}`;
 }
 
 function saveEpisode() {
@@ -651,13 +672,13 @@ function saveEpisode() {
   const existing = store.episodes.find((x) => x.id === f.id);
   if (existing) ep.createdAt = existing.createdAt;
   store.upsertEpisode(ep);
-  closeSheet();
+  closeSheet(true);
   toast('Эпизод сохранён');
 }
 
 // ---------- ANXIETY SHEET ----------
 let anxForm = null;
-function openAnxietySheet(record, presetOngoing = false) {
+function openAnxietySheet(record, presetOngoing = false, opts = {}) {
   if (record) {
     anxForm = { id: record.id, startTime: record.startTime, ongoing: !record.endTime,
       manualMinutes: record.manualDurationMinutes ?? 20, intensity: record.intensity,
@@ -667,7 +688,10 @@ function openAnxietySheet(record, presetOngoing = false) {
     anxForm = { id: store.uid(), startTime: new Date().toISOString(), ongoing: presetOngoing, manualMinutes: 20,
       intensity: 3, reasonIDs: [], customReason: '', notes: '', linkedEpisodeID: '', isNew: true };
   }
-  openSheet(renderAnxietySheet);
+  anxForm.discardId = opts.discardId || null;
+  openSheet(renderAnxietySheet, opts.discardId
+    ? { onDismiss: () => { store.deleteAnxiety(opts.discardId); toast('Тревога не сохранена'); } }
+    : null);
 }
 
 // ---------- ХАБ «+»: выбор эпизода ----------
@@ -717,7 +741,10 @@ function renderAnxietySheet() {
       <div style="height:10px"></div><input type="text" placeholder="Своя причина" data-field="customReason" value="${esc(f.customReason)}"/></div>
     ${linkOpts}
     <div class="field-row"><label class="field">Заметка</label><textarea data-field="notes">${esc(f.notes)}</textarea></div>
-    <button class="btn-primary" data-action="save-anxiety">${icon('check')} Сохранить</button>`;
+    <button class="btn-primary" data-action="save-anxiety">${icon('check')} Сохранить</button>
+    ${f.discardId
+      ? `<button class="btn-secondary" style="color:var(--danger);margin-top:10px" data-action="discard-anxiety" data-id="${f.discardId}">${icon('trash', 'sm')} Не записывать эту тревогу</button>`
+      : `<button class="btn-secondary" style="margin-top:10px" data-action="cancel-sheet">Отмена</button>`}`;
 }
 
 function saveAnxiety() {
@@ -738,7 +765,7 @@ function saveAnxiety() {
   const existing = store.anxiety.find((x) => x.id === f.id);
   if (existing) rec.createdAt = existing.createdAt;
   store.upsertAnxiety(rec);
-  closeSheet();
+  closeSheet(true);
   toast('Тревога сохранена');
 }
 
@@ -811,16 +838,133 @@ function medsSection() {
     </div>`;
 }
 
-// ---------- ВЕЧЕР ДНЯ (ощущения + статистика) ----------
+// ---------- ВЕЧЕР ДНЯ — проводка, фиксирующая результат за день ----------
 function renderEvening() {
+  if (state.eveningRoute === 'stats') return renderEveningStats();
+  const date = state.eveningDate ? new Date(state.eveningDate) : new Date();
+  const log = draft(date);
+  const eps = store.episodesOn(date).filter((e) => e.endTime);
+  const anx = store.anxietyOn(date).filter((a) => a.endTime);
+  const isToday = dayKey(date) === dayKey(new Date());
+  const saved = !!store.dayLog(date);
+
+  // 1. Счётчик того, что уже зафиксировано в течение дня.
+  const logged = `
+    <div class="card stack">
+      <div class="section-header">Зафиксировано в течение дня</div>
+      <div class="grid2">
+        ${metric(eps.length, 'напряжение', 'waveform.path')}
+        ${metric(anx.length, 'тревога', 'wind')}
+        ${metric(formatDuration(eps.reduce((s, e) => s + episodeDuration(e), 0)), 'суммарно', 'clock')}
+        ${metric(eps.reduce((m, e) => Math.max(m, e.intensity), 0) || '—', 'макс. инт.', 'gauge')}
+      </div>
+      <div class="muted" style="font-size:12px">Это уже учтено. Ниже — итог по тем эпизодам, которые вы не вносили отдельно.</div>
+    </div>`;
+
+  // 2. Итог дня по эпизодам (длительность / сила / частота).
+  const summary = `
+    <div class="card stack">
+      <div class="section-header">Итог дня по эпизодам</div>
+      <label class="field">Длительность</label>${segmented('dl-dur', log.duration || 'none', DAY_DURATION)}
+      <label class="field">Сила</label>${segmented('dl-str', log.strength || 'none', DAY_STRENGTH)}
+      <label class="field">Частота за день</label>${segmented('dl-freq', log.frequency || 'f0', DAY_FREQUENCY)}
+    </div>`;
+
+  // 3. Линейка триггеров из эпизодов.
+  const trig = store.reasons(true);
+  const selTrig = log.triggerIds || [];
+  const triggers = `
+    <div class="card stack">
+      <div class="section-header">Триггеры</div>
+      <div class="chips">${trig.map((r) =>
+        `<div class="chip ${selTrig.includes(r.id) ? 'on' : ''}" data-action="dl-trigger" data-id="${r.id}">${icon(r.iconName, 'sm')}${esc(r.title)}</div>`).join('')}</div>
+    </div>`;
+
+  // 4. Полный перечень маркеров Daylio по разделам.
+  const selMark = log.markerIds || [];
+  const markers = store.hasDaylio() ? `
+    <div class="card stack">
+      <div class="section-header">Маркеры дня</div>
+      ${store.daylio.groups.map((g) => {
+        const items = store.daylio.markers.filter((m) => m.groupId === g.id);
+        if (!items.length) return '';
+        const n = items.filter((m) => selMark.includes(m.id)).length;
+        const open = state.openGroups.has(g.id);
+        return `<div class="mgroup">
+          <div class="mgroup-head" data-action="dl-group" data-id="${g.id}">
+            <span class="grow">${esc(g.name)}${n ? ` <span class="badge">${n}</span>` : ''}</span>
+            ${icon(open ? 'chevron.down' : 'chevron.right', 'sm')}
+          </div>
+          ${open ? `<div class="chips">${items.map((m) =>
+            `<div class="chip ${selMark.includes(m.id) ? 'on' : ''}" data-action="dl-marker" data-id="${m.id}">${esc(m.name)}</div>`).join('')}</div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>` : '';
+
+  // 5. Настроение дня.
+  const mood = `
+    <div class="card stack">
+      <div class="section-header">Настроение дня</div>
+      <div class="mood-pick">${[1, 2, 3, 4, 5].map((lv) =>
+        `<button class="mood-btn ${log.mood === lv ? 'on' : ''}" data-action="dl-mood" data-lv="${lv}"
+          style="--mc:${MOOD_META[lv].color}">${MOOD_META[lv].title}</button>`).join('')}</div>
+    </div>`;
+
   view.innerHTML = `
     <h1 class="nav-title">Вечер дня</h1>
-    <div class="section-header">Ощущения и чувства</div>
-    <div class="card stack">
-      <div class="muted">Спокойно дозаполните вечером: ощущения от эпизодов и от препаратов — по шкалам психическое / физическое / неврологическое.</div>
-      <button class="btn-primary" data-action="open-effect">${icon('activity')} Зафиксировать ощущения</button>
+    <div class="card row between">
+      <button class="icon-btn" data-action="ev-prev">${icon('chevron.left', 'sm')}</button>
+      <div style="text-align:center">
+        <div style="font-weight:650;text-transform:capitalize">${date.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'long' })}</div>
+        <div class="muted" style="font-size:12px">${saved ? 'проводка сохранена' : 'проводка не сделана'}</div>
+      </div>
+      <button class="icon-btn" data-action="ev-next" ${isToday ? 'disabled style="opacity:.3"' : ''}>${icon('chevron.right', 'sm')}</button>
     </div>
-    <div style="height:10px"></div>
+    ${logged}
+    ${summary}
+    ${triggers}
+    ${markers}
+    ${mood}
+    ${eveningMedsCard(date)}
+    <div class="field-row"><label class="field">Заметка дня</label><textarea data-field="dl-note" placeholder="что было важного">${esc(log.note || '')}</textarea></div>
+    <button class="btn-primary" data-action="dl-save">${icon('check')} ${saved ? 'Обновить проводку' : 'Закрыть день'}</button>
+    <button class="btn-secondary" data-action="ev-stats" style="margin-top:10px">${icon('stats')} Статистика и графики</button>
+    <div class="card"><div class="muted" style="font-size:12px">Проводка фиксирует результат за день: эпизоды, триггеры, маркеры, настроение и действие препаратов. Напоминание приходит в ${String(store.settings.reminderHour).padStart(2, '0')}:${String(store.settings.reminderMinute ?? 21).padStart(2, '0')}.</div></div>`;
+}
+
+// Действие препаратов, которые вы принимаете — прямо в вечерней проводке.
+function eveningMedsCard(date) {
+  const active = store.medications(true);
+  if (!active.length) {
+    return `<div class="card stack">
+      <div class="section-header">Действие препаратов</div>
+      <div class="muted" style="font-size:13px">Нет препаратов в приёме. Откройте отчёт и нажмите «Начать приём» у нужной строки — он появится здесь для ежедневной оценки.</div>
+      <button class="btn-secondary" data-action="goto-report">${icon('table')} Открыть отчёт</button>
+    </div>`;
+  }
+  const rows = active.map((m) => {
+    const e = store.effectFor(m.id, date);
+    const sum = e ? (Number(e.physScore) || 0) + (Number(e.psychScore) || 0) + (Number(e.neuroScore) || 0) : null;
+    const taken = store.intakesOn(date).some((x) => x.medicationId === m.id && x.taken);
+    return `<div class="card tight stack">
+      <div class="row between">
+        <div><div style="font-weight:600">${icon('pill', 'sm')} ${esc(m.name)}</div>
+          <div class="muted" style="font-size:12px">${esc(prescriptionText(m))}</div></div>
+        ${e ? `<span class="signed-val ${sum > 0 ? 'pos' : (sum < 0 ? 'neg' : 'muted')}">${sum > 0 ? '+' + sum : sum}</span>` : `<span class="muted" style="font-size:12px">не оценён</span>`}
+      </div>
+      <div class="row" style="gap:8px">
+        <button class="btn-secondary" style="padding:10px" data-action="${taken ? 'skip-med' : 'took-med'}" data-id="${m.id}">${taken ? `${icon('check', 'sm')} принял` : 'отметить приём'}</button>
+        <button class="btn-secondary" style="padding:10px" data-action="open-effect" data-med="${m.id}">${icon('activity', 'sm')} ${e ? 'изменить оценку' : 'оценить действие'}</button>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="section-header">Действие препаратов</div>${rows}`;
+}
+
+function renderEveningStats() {
+  view.innerHTML = `
+    <div class="row" style="gap:8px;margin:8px 0 12px"><button class="btn-ghost" data-action="ev-back">${icon('chevron.left', 'sm')} Вечер дня</button></div>
+    <h1 class="nav-title" style="margin-top:0">Статистика</h1>
     ${moodBody()}
     ${statsBody()}`;
 }
@@ -1003,6 +1147,18 @@ function prescriptionText(m) {
   if (m.schedule) parts.push(m.schedule);
   return parts.join(' · ') || '—';
 }
+// Одноразовые вмешательства (МРТ, операция, анализы) не «принимают» —
+// у них нет курса и ежедневной оценки.
+const ONE_OFF = new Set(['diagnostic', 'surgery']);
+function courseButton(m) {
+  const type = m.type || 'medication';
+  if (ONE_OFF.has(type)) return '<span class="muted" style="font-size:12px">—</span>';
+  const label = (type === 'medication' || type === 'supplement') ? 'Начать приём' : 'Начать курс';
+  return m.isActive
+    ? `<button class="btn-ghost" data-action="stop-course" data-id="${m.id}">Завершить</button>`
+    : `<button class="btn-ghost" data-action="start-course" data-id="${m.id}">${label}</button>`;
+}
+
 function signedCell(v) {
   const n = Number(v) || 0;
   const cls = n > 0 ? 'pos' : (n < 0 ? 'neg' : '');
@@ -1014,15 +1170,18 @@ function renderHealthTable() {
     const prov = m.provenance ? `<span title="из первичного документа с печатью" style="color:var(--accent)">${icon('check', 'sm')}</span> ` : '';
     const sens = m.sensations || (store.latestEffectFor(m.id) ? topSymptoms(store.latestEffectFor(m.id)) : '');
     const sum = signedSum(m);
+    const live = store.medRating(m.id); // живой рейтинг из вечерних оценок
     return `<tr class="${m.highlighted ? 'hi' : ''}">
       <td class="num">${i + 1}</td>
-      <td>${prov}${esc(m.name)}</td>
+      <td>${prov}${esc(m.name)}${m.isActive ? ' <span class="badge">в приёме</span>' : ''}</td>
       <td>${esc(prescriptionText(m))}</td>
       <td>${esc(m.clinic || m.prescribedBy || '—')}</td>
       <td class="num">${esc(m.year || (m.startDate ? m.startDate.slice(0, 4) : '—'))}</td>
       ${signedCell(m.physScore)}${signedCell(m.psychScore)}${signedCell(m.neuroScore)}
       <td class="num ${sum > 0 ? 'pos' : (sum < 0 ? 'neg' : '')}">${sum > 0 ? '+' + sum : sum}</td>
+      <td class="num">${live ? `<span class="${live.sum > 0 ? 'pos' : (live.sum < 0 ? 'neg' : '')}">${live.sum > 0 ? '+' + live.sum : live.sum}</span><span class="muted" style="font-size:11px"> ×${live.n}</span>` : '—'}</td>
       <td class="sens">${esc(sens) || '—'}</td>
+      <td>${courseButton(m)}</td>
     </tr>`;
   }).join('');
 
@@ -1036,8 +1195,8 @@ function renderHealthTable() {
       <button class="btn-primary" data-action="seed-report">${icon('table')} Заполнить из моей таблицы</button>
     </div>`}
     <div class="table-scroll"><table class="report">
-      <thead><tr><th>№</th><th>Наименование</th><th>Назначение врача</th><th>Клиника</th><th>Год</th><th>Физ.</th><th>Псих.</th><th>Невр.</th><th>Сумма</th><th>Ощущения</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="10" class="muted" style="text-align:center;padding:16px">Нет данных</td></tr>'}</tbody>
+      <thead><tr><th>№</th><th>Наименование</th><th>Назначение врача</th><th>Клиника</th><th>Год</th><th>Физ.</th><th>Псих.</th><th>Невр.</th><th>Сумма</th><th title="средняя оценка из вечерних проводок">Факт</th><th>Ощущения</th><th>Приём</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="12" class="muted" style="text-align:center;padding:16px">Нет данных</td></tr>'}</tbody>
     </table></div>
     <div class="row" style="gap:8px;margin-top:10px">
       <button class="btn-secondary" data-action="open-med">${icon('plus')} Добавить строку</button>
@@ -1058,7 +1217,9 @@ function renderBPSheet() {
   const f = bpForm;
   return `
     <div class="sheet-head"><div class="title">Давление</div><button class="btn-ghost" data-action="save-bp">Сохранить</button></div>
-    <div class="field-row"><label class="field">Время</label><input type="datetime-local" data-field="dateTime" value="${toLocalInput(f.dateTime)}"/></div>
+    <button class="btn-secondary" data-action="pick-bp-photo">${icon('camera')} Распознать по фото тонометра</button>
+    ${f.recognized ? `<div class="callout">Распознано с фото${f.lowConfidence ? ' — <b>цифры видны плохо, проверьте</b>' : ''}. Поправьте, если ошибка.</div>` : ''}
+    <div class="field-row" style="margin-top:12px"><label class="field">Время</label><input type="datetime-local" data-field="dateTime" value="${toLocalInput(f.dateTime)}"/></div>
     <div class="row" style="gap:10px">
       <div class="grow"><label class="field">САД (верх.)</label><input type="number" inputmode="numeric" data-field="sys" value="${esc(f.sys)}" placeholder="120"/></div>
       <div class="grow"><label class="field">ДАД (нижн.)</label><input type="number" inputmode="numeric" data-field="dia" value="${esc(f.dia)}" placeholder="80"/></div>
@@ -1066,7 +1227,29 @@ function renderBPSheet() {
     </div>
     <div class="field-row" style="margin-top:14px"><label class="field">Контекст</label>${selectField('context', f.context, BP_CONTEXTS)}</div>
     <div class="field-row"><label class="field">Заметка</label><textarea data-field="notes">${esc(f.notes)}</textarea></div>
-    <button class="btn-primary" data-action="save-bp">${icon('check')} Сохранить</button>`;
+    <button class="btn-primary" data-action="save-bp">${icon('check')} Сохранить</button>
+    <button class="btn-secondary" style="margin-top:10px" data-action="cancel-sheet">Отмена</button>`;
+}
+
+// Фото тонометра → три показателя в форму (с подтверждением пользователем).
+async function handleBPPhoto(file) {
+  if (!file || !bpForm) return;
+  if (!ai.hasApiKey()) { toast('Сначала добавьте AI-ключ (вкладка AI)'); return; }
+  if (!store.settings.aiConsent) { toast('Включите согласие на вкладке AI'); return; }
+  toast('Распознаю показания…');
+  try {
+    const base64 = await blobToBase64(file);
+    const r = await ai.extractBloodPressure({ base64, mediaType: file.type || 'image/jpeg', model: store.settings.aiModelExtract });
+    if (!r.sys || !r.dia) { toast('Не увидел цифры — введите вручную'); return; }
+    bpForm.sys = r.sys; bpForm.dia = r.dia;
+    if (r.pulse) bpForm.pulse = r.pulse;
+    bpForm.recognized = true;
+    bpForm.lowConfidence = !r.confident;
+    renderSheet();
+    toast(`Распознано: ${r.sys}/${r.dia}${r.pulse ? ` · пульс ${r.pulse}` : ''}`);
+  } catch (e) {
+    toast('Ошибка распознавания: ' + (e?.message || 'неизвестно'));
+  }
 }
 function saveBP() {
   const f = bpForm;
@@ -1074,7 +1257,7 @@ function saveBP() {
   const pulse = f.pulse !== '' && f.pulse != null ? parseInt(f.pulse, 10) : null;
   if (!sys || !dia) { toast('Укажите САД и ДАД'); return; }
   store.upsertBP({ id: f.id, dateTime: f.dateTime, sys, dia, pulse: pulse || null, context: f.context, notes: f.notes || null, createdAt: new Date().toISOString() });
-  closeSheet();
+  closeSheet(true);
   toast('Давление сохранено');
 }
 
@@ -1158,7 +1341,7 @@ function saveMed() {
     startDate: f.startDate || '', endDate: f.endDate || '', isActive: f.isActive,
     notes: f.notes || '', sortOrder: f.sortOrder, createdAt: existing?.createdAt || new Date().toISOString(),
   });
-  closeSheet();
+  closeSheet(true);
   toast('Сохранено');
 }
 
@@ -1262,7 +1445,7 @@ function applyExtraction() {
   });
   store.updateDocument(st.docId, { parsed: true, clinic: d.clinic || '' });
   extractState = null;
-  closeSheet();
+  closeSheet(true);
   toast(stamp ? 'Отчёт нормализован по документу' : 'Данные добавлены в отчёт');
 }
 
@@ -1302,12 +1485,18 @@ function renderHealthPreview() {
 
 // ---------- EFFECT SHEET ----------
 let effForm = null;
-function openEffectSheet(existing, medId) {
+function openEffectSheet(existing, medId, forDate) {
   const scales = {};
   EFFECT_GROUPS.forEach((g) => g.items.forEach(([k]) => { scales[k] = 0; }));
+  const base = { physScore: 0, psychScore: 0, neuroScore: 0 };
   effForm = existing
-    ? { id: existing.id, dateTime: existing.dateTime, medicationId: existing.medicationId || '', scales: { ...scales, ...(existing.scales || {}) }, effectiveness: existing.effectiveness || 0, tolerability: existing.tolerability || 0, sideEffects: existing.sideEffects || '', notes: existing.notes || '', isNew: false }
-    : { id: store.uid(), dateTime: new Date().toISOString(), medicationId: medId || '', scales, effectiveness: 0, tolerability: 0, sideEffects: '', notes: '', isNew: true };
+    ? { ...base, id: existing.id, dateTime: existing.dateTime, medicationId: existing.medicationId || '',
+        scales: { ...scales, ...(existing.scales || {}) }, physScore: existing.physScore || 0,
+        psychScore: existing.psychScore || 0, neuroScore: existing.neuroScore || 0,
+        effectiveness: existing.effectiveness || 0, tolerability: existing.tolerability || 0,
+        sideEffects: existing.sideEffects || '', notes: existing.notes || '', isNew: false }
+    : { ...base, id: store.uid(), dateTime: (forDate || new Date()).toISOString(), medicationId: medId || '',
+        scales, effectiveness: 0, tolerability: 0, sideEffects: '', notes: '', isNew: true };
   openSheet(renderEffectSheet);
 }
 function severityRow(key, label, value) {
@@ -1328,26 +1517,36 @@ function renderEffectSheet() {
       <div class="section-header">${icon(g.icon, 'sm')} ${g.title}</div>
       ${g.items.map(([k, label]) => severityRow(k, label, f.scales[k] || 0)).join('')}
     </div>`).join('');
+  const sum = (Number(f.physScore) || 0) + (Number(f.psychScore) || 0) + (Number(f.neuroScore) || 0);
+  const sumCls = sum > 0 ? 'pos' : (sum < 0 ? 'neg' : 'muted');
   return `
-    <div class="sheet-head"><div class="title">Ощущения</div><button class="btn-ghost" data-action="save-effect">Сохранить</button></div>
+    <div class="sheet-head"><div class="title">Действие и ощущения</div><button class="btn-ghost" data-action="save-effect">Сохранить</button></div>
     <div class="field-row"><label class="field">Время</label><input type="datetime-local" data-field="dateTime" value="${toLocalInput(f.dateTime)}"/></div>
-    <div class="field-row"><label class="field">Лекарство (необязательно)</label>
+    <div class="field-row"><label class="field">Препарат</label>
       <select data-field="medicationId"><option value="">Общий фон</option>${meds.map((m) => `<option value="${m.id}" ${f.medicationId === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
+    <div class="card stack">
+      <div class="row between"><div class="section-header">Действие (−10…+10)</div><span class="signed-val ${sumCls}" id="signed-sum">сумма ${sum > 0 ? '+' + sum : sum}</span></div>
+      ${SIGNED_AXES.map(([k, l]) => signedRow(k, l, f[k])).join('')}
+      <div class="muted" style="font-size:12px">Минус — ухудшило, плюс — помогло. Эти баллы формируют «Факт» в отчёте и рейтинг препаратов.</div>
+    </div>
+    <div class="list-head">Подробнее (необязательно)</div>
     ${groups}
     <div class="card">${scaleRow('Субъективная эффективность', f.effectiveness, 'eff-effect')}</div>
     <div class="card">${scaleRow('Переносимость', f.tolerability, 'eff-tol')}</div>
     <div class="field-row"><label class="field">Побочные эффекты</label><input type="text" data-field="sideEffects" value="${esc(f.sideEffects)}"/></div>
     <div class="field-row"><label class="field">Заметка</label><textarea data-field="notes">${esc(f.notes)}</textarea></div>
-    <button class="btn-primary" data-action="save-effect">${icon('check')} Сохранить</button>`;
+    <button class="btn-primary" data-action="save-effect">${icon('check')} Сохранить</button>
+    <button class="btn-secondary" style="margin-top:10px" data-action="cancel-sheet">Отмена</button>`;
 }
 function saveEffect() {
   const f = effForm;
   store.upsertEffect({
     id: f.id, dateTime: f.dateTime, medicationId: f.medicationId || null, scales: f.scales,
+    physScore: Number(f.physScore) || 0, psychScore: Number(f.psychScore) || 0, neuroScore: Number(f.neuroScore) || 0,
     effectiveness: f.effectiveness || 0, tolerability: f.tolerability || 0,
     sideEffects: f.sideEffects || null, notes: f.notes || null, createdAt: new Date().toISOString(),
   });
-  closeSheet();
+  closeSheet(true);
   toast('Ощущения сохранены');
 }
 
@@ -1400,7 +1599,13 @@ function renderSheet() {
   const body = $('#sheet-body');
   if (sheetRenderer && body) body.innerHTML = sheetRenderer();
 }
-function closeSheet() { sheetRenderer = null; sheetCtx = null; sheetRoot.innerHTML = ''; }
+// closeSheet(true) — закрытие после сохранения. Иначе это отмена: если лист
+// создал «черновую» запись (эпизод по таймеру), она удаляется.
+function closeSheet(saved = false) {
+  const onDismiss = sheetCtx && sheetCtx.onDismiss;
+  sheetRenderer = null; sheetCtx = null; sheetRoot.innerHTML = '';
+  if (!saved && typeof onDismiss === 'function') onDismiss();
+}
 
 // ---------- render dispatch ----------
 function render() {
@@ -1429,8 +1634,20 @@ document.addEventListener('click', (e) => {
     'cap-episode-back': () => { closeSheet(); openEpisodeSheet(null); },
     'cap-anxiety-now': () => { closeSheet(); state.tab = 'input'; store.startAnxiety(); toast('Тревога начата'); },
     'cap-anxiety-back': () => { closeSheet(); openAnxietySheet(null, false); },
-    'finish-episode': () => { store.finishEpisodeNow(t.dataset.id); openEpisodeSheet(store.episodes.find((x) => x.id === t.dataset.id)); },
-    'finish-anxiety': () => { store.finishAnxietyNow(t.dataset.id); openAnxietySheet(store.anxiety.find((x) => x.id === t.dataset.id)); },
+    // Завершение по таймеру: запись уже существует. Отмена листа = удалить её.
+    'finish-episode': () => {
+      const id = t.dataset.id;
+      store.finishEpisodeNow(id);
+      openEpisodeSheet(store.episodes.find((x) => x.id === id), { discardId: id, kind: 'episode' });
+    },
+    'finish-anxiety': () => {
+      const id = t.dataset.id;
+      store.finishAnxietyNow(id);
+      openAnxietySheet(store.anxiety.find((x) => x.id === id), false, { discardId: id, kind: 'anxiety' });
+    },
+    'cancel-sheet': () => closeSheet(),
+    'discard-episode': () => { if (confirm('Удалить этот эпизод?')) { store.deleteEpisode(t.dataset.id); closeSheet(true); toast('Эпизод удалён'); } },
+    'discard-anxiety': () => { if (confirm('Удалить эту запись тревоги?')) { store.deleteAnxiety(t.dataset.id); closeSheet(true); toast('Запись удалена'); } },
     'add-episode': () => openEpisodeSheet(null),
     'edit-episode': () => { const ep = store.episodes.find((x) => x.id === t.dataset.id); closeSheet(); openEpisodeSheet(ep); },
     'del-episode': () => { store.deleteEpisode(t.dataset.id); if (sheetCtx?.date) renderSheet(); },
@@ -1439,6 +1656,7 @@ document.addEventListener('click', (e) => {
     'pick-daylio': () => { const inp = $('#daylio-file'); if (inp) { inp.value = ''; inp.click(); } },
     // --- Документы ---
     'pick-doc': () => { const inp = $('#doc-file'); if (inp) { inp.value = ''; inp.click(); } },
+    'pick-bp-photo': () => { const inp = $('#bp-photo'); if (inp) { inp.value = ''; inp.click(); } },
     'parse-doc': () => parseDoc(t.dataset.id),
     'del-doc': () => { if (confirm('Удалить документ?')) { deleteDoc(t.dataset.id).catch(() => {}); store.deleteDocument(t.dataset.id); } },
     'view-doc': async () => {
@@ -1446,6 +1664,27 @@ document.addEventListener('click', (e) => {
       catch { toast('Не удалось открыть'); }
     },
     'apply-extract': applyExtraction,
+    // --- Вечерняя проводка ---
+    'ev-prev': () => { const d = state.eveningDate ? new Date(state.eveningDate) : new Date(); d.setDate(d.getDate() - 1); state.eveningDate = d.toISOString(); dayDraft = null; render(); },
+    'ev-next': () => { const d = state.eveningDate ? new Date(state.eveningDate) : new Date(); d.setDate(d.getDate() + 1); state.eveningDate = d > new Date() ? null : d.toISOString(); dayDraft = null; render(); },
+    'ev-stats': () => { state.eveningRoute = 'stats'; render(); },
+    'ev-back': () => { state.eveningRoute = 'root'; render(); },
+    'dl-trigger': () => { const d = draft(eveningDate()); const s = new Set(d.triggerIds || []); s.has(t.dataset.id) ? s.delete(t.dataset.id) : s.add(t.dataset.id); d.triggerIds = [...s]; render(); },
+    'dl-marker': () => { const d = draft(eveningDate()); const id = Number(t.dataset.id); const s = new Set(d.markerIds || []); s.has(id) ? s.delete(id) : s.add(id); d.markerIds = [...s]; render(); },
+    'dl-group': () => { const id = Number(t.dataset.id); state.openGroups.has(id) ? state.openGroups.delete(id) : state.openGroups.add(id); render(); },
+    'dl-mood': () => { const d = draft(eveningDate()); const lv = Number(t.dataset.lv); d.mood = d.mood === lv ? null : lv; render(); },
+    'dl-save': () => {
+      const date = eveningDate(); const d = draft(date);
+      store.saveDayLog(date, {
+        duration: d.duration || 'none', strength: d.strength || 'none', frequency: d.frequency || 'f0',
+        triggerIds: d.triggerIds || [], markerIds: d.markerIds || [], mood: d.mood ?? null, note: d.note || '',
+      });
+      dayDraft = null;
+      toast('День закрыт');
+    },
+    'goto-report': () => { state.tab = 'diag'; state.diagRoute = 'table'; render(); },
+    'start-course': () => { store.startCourse(t.dataset.id); toast('Приём начат — препарат появится в «Вечере дня»'); },
+    'stop-course': () => { store.stopCourse(t.dataset.id); toast('Приём завершён'); },
     'seed-report': () => {
       const r = seedInterventions(store);
       toast(r.added ? `Добавлено строк: ${r.added}${r.skipped ? `, пропущено дублей: ${r.skipped}` : ''}` : 'Все строки уже в отчёте');
@@ -1519,7 +1758,14 @@ document.addEventListener('click', (e) => {
     'toggle-med-form': () => { medForm.isActive = !medForm.isActive; renderSheet(); },
     'took-med': () => { store.logIntake(t.dataset.id, true); toast('Отмечено: принял'); },
     'skip-med': () => { store.logIntake(t.dataset.id, false); toast('Отмечено: пропустил'); },
-    'open-effect': () => openEffectSheet(null, t.dataset.med || ''),
+    // В вечерней проводке — одна оценка на пару препарат+день, повторное
+    // открытие правит её, а не плодит дубли.
+    'open-effect': () => {
+      const medId = t.dataset.med || '';
+      const d = state.tab === 'evening' ? eveningDate() : new Date();
+      const existing = medId ? store.effectFor(medId, d) : null;
+      openEffectSheet(existing, medId, d);
+    },
     'save-effect': saveEffect,
     'sev': () => { effForm.scales[t.dataset.key] = Number(t.dataset.val); renderSheet(); },
     'eff-effect': () => { effForm.effectiveness = Number(t.dataset.val); renderSheet(); },
@@ -1532,18 +1778,25 @@ document.addEventListener('click', (e) => {
 document.addEventListener('input', (e) => {
   // Знаковые ползунки действия вмешательства.
   const sg = e.target.closest('[data-signed]');
-  if (sg && medForm) {
-    medForm[sg.dataset.signed] = Number(sg.value) || 0;
+  const sform = activeHealthForm();
+  if (sg && sform) {
+    sform[sg.dataset.signed] = Number(sg.value) || 0;
     const valEl = sg.parentElement.querySelector('.signed-val');
-    if (valEl) { const v = medForm[sg.dataset.signed]; valEl.textContent = v > 0 ? '+' + v : v; valEl.className = 'signed-val ' + (v > 0 ? 'pos' : (v < 0 ? 'neg' : 'muted')); }
+    if (valEl) { const v = sform[sg.dataset.signed]; valEl.textContent = v > 0 ? '+' + v : v; valEl.className = 'signed-val ' + (v > 0 ? 'pos' : (v < 0 ? 'neg' : 'muted')); }
     const sumEl = $('#signed-sum');
-    if (sumEl) { const s = signedSum(medForm); sumEl.textContent = 'сумма ' + (s > 0 ? '+' + s : s); sumEl.className = 'signed-val ' + (s > 0 ? 'pos' : (s < 0 ? 'neg' : 'muted')); }
+    if (sumEl) { const s = signedSum(sform); sumEl.textContent = 'сумма ' + (s > 0 ? '+' + s : s); sumEl.className = 'signed-val ' + (s > 0 ? 'pos' : (s < 0 ? 'neg' : 'muted')); }
     return;
   }
   const f = e.target.closest('[data-field]');
   if (!f) return;
   const field = f.dataset.field;
   const val = f.value;
+  if (field === 'dl-note') { draft(eveningDate()).note = val; return; }
+  if (field === 'reminderTime') {
+    const [h, m] = val.split(':').map(Number);
+    if (!Number.isNaN(h)) { store.setSetting('reminderHour', h); store.setSetting('reminderMinute', m || 0); scheduleReminderNote(); }
+    return;
+  }
   if (sheetIsEpisode() && epForm && ['startTime', 'endTime', 'customReason', 'notes'].includes(field)) { epForm[field] = val; }
   if (sheetIsAnxiety() && anxForm && ['startTime', 'customReason', 'notes', 'linkedEpisodeID'].includes(field)) { anxForm[field] = val; }
   const hform = activeHealthForm();
@@ -1553,6 +1806,7 @@ document.addEventListener('change', (e) => {
   if (e.target.id === 'daylio-file') { handleDaylioFile(e.target.files[0]); return; }
   if (e.target.id === 'doc-file') { handleDocFile(e.target.files[0]); return; }
   if (e.target.id === 'health-file') { handleHealthFile(e.target.files[0]); return; }
+  if (e.target.id === 'bp-photo') { handleBPPhoto(e.target.files[0]); return; }
   const r = e.target.closest('[data-action="rename-reason"]');
   if (r) { store.updateReason(r.dataset.id, { title: e.target.value.trim() || 'Без названия' }); return; }
   const sel = e.target.closest('select[data-field]');
@@ -1591,6 +1845,9 @@ function toggleFormReason(id) {
 function handleSeg(group, val) {
   if (group === 'period') { state.statsPeriod = val; render(); return; }
   if (group === 'aiperiod') { store.setSetting('aiPeriod', val); return; }
+  if (group === 'dl-dur') { draft(eveningDate()).duration = val; render(); return; }
+  if (group === 'dl-str') { draft(eveningDate()).strength = val; render(); return; }
+  if (group === 'dl-freq') { draft(eveningDate()).frequency = val; render(); return; }
   if (group === 'theme') { store.setSetting('theme', val); return; }
   if (sheetIsEpisode()) {
     if (group === 'epType') epForm.type = val;
@@ -1638,16 +1895,41 @@ async function toggleReminder() {
   store.setSetting('reminderEnabled', on);
   if (on) scheduleReminderNote();
 }
-function scheduleReminderNote() {
-  // iOS PWA ограничивает фоновые уведомления; показываем напоминание, когда
-  // приложение открыто после заданного часа и ещё не показывали сегодня.
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+// Напоминание о вечерней проводке. iOS-PWA не даёт фоновых уведомлений, поэтому
+// работаем двумя путями: (1) точный таймер, пока приложение открыто;
+// (2) догоняющее уведомление при возврате после назначенного времени.
+let reminderTimer = null;
+function reminderTime() {
+  const s = store.settings;
+  return { h: s.reminderHour ?? 21, m: s.reminderMinute ?? 21 };
+}
+function reminderDue(now = new Date()) {
+  const { h, m } = reminderTime();
+  return now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m);
+}
+function fireReminder() {
   const now = new Date();
   const key = 'hgbn.reminded.' + dayKey(now);
-  if (now.getHours() >= store.settings.reminderHour && !localStorage.getItem(key)) {
-    new Notification('Самонаблюдение', { body: 'Загляните в дневник и отметьте, как прошёл день.' });
-    localStorage.setItem(key, '1');
+  if (localStorage.getItem(key)) return;
+  if (store.dayLog(now)) return; // день уже закрыт — не дёргаем
+  localStorage.setItem(key, '1');
+  const body = 'Пора закрыть день: эпизоды, триггеры, маркеры и действие препаратов.';
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification('Вечерняя проводка', { body });
+  } else {
+    toast('Пора закрыть день — вкладка «Вечер»');
   }
+}
+function scheduleReminderNote() {
+  if (reminderTimer) { clearTimeout(reminderTimer); reminderTimer = null; }
+  if (!store.settings.reminderEnabled) return;
+  const now = new Date();
+  if (reminderDue(now)) { fireReminder(); return; }
+  const { h, m } = reminderTime();
+  const at = new Date(now); at.setHours(h, m, 0, 0);
+  const ms = at - now;
+  // Таймер ставим только на разумный горизонт (пока вкладка живёт).
+  if (ms > 0 && ms < 12 * 3600 * 1000) reminderTimer = setTimeout(fireReminder, ms);
 }
 
 // ---------- boot ----------
@@ -1663,3 +1945,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => st
 paintTabIcons();
 render();
 scheduleReminderNote();
+// Возврат в приложение после назначенного времени — догоняющее напоминание.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') scheduleReminderNote();
+});

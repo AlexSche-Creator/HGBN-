@@ -49,12 +49,15 @@
   <!-- Контейнер для модальных листов -->
   <div id="sheet-root"></div>
 
-  <!-- Скрытый выбор файла для импорта Daylio -->
-  <input type="file" id="daylio-file" accept=".daylio,application/zip" hidden />
-  <!-- Скрытый выбор файла для документов (PDF/JPEG) -->
+  <!-- Импорт Daylio. Без accept: iOS «Файлы» затемняет неизвестные расширения
+       вроде .daylio, и выбрать файл невозможно. Формат проверяем при разборе. -->
+  <input type="file" id="daylio-file" hidden />
+  <!-- Документы (PDF/JPEG) — из галереи, камеры или файлов -->
   <input type="file" id="doc-file" accept="application/pdf,image/*" hidden />
-  <!-- Скрытый выбор файла для Apple Health (ZIP/XML) -->
-  <input type="file" id="health-file" accept=".zip,.xml,application/zip,text/xml" hidden />
+  <!-- Apple Health — тоже без accept, ZIP большой и по-разному типизируется -->
+  <input type="file" id="health-file" hidden />
+  <!-- Фото тонометра для распознавания давления -->
+  <input type="file" id="bp-photo" accept="image/*" hidden />
 
   <script type="module" src="./js/app.js"></script>
   <script>
