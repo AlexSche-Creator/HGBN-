@@ -238,8 +238,9 @@ svg.ic.lg { width: 28px; height: 28px; }
 }
 .tab { display: flex; flex-direction: column; align-items: center; gap: 3px; color: var(--text-secondary); flex: 1; padding: 2px 0; background: none; border: none; }
 .tab.on { color: var(--accent); }
-.tab-label { font-size: 11px; }
-.tab-icon svg { width: 24px; height: 24px; }
+/* Шесть вкладок: подпись мельче, чтобы «Лекарства» и «Диагностика» помещались. */
+.tab-label { font-size: 9.5px; letter-spacing: -.2px; white-space: nowrap; }
+.tab-icon svg { width: 22px; height: 22px; }
 
 /* Глобальная кнопка «+» — фиксация эпизода с любой вкладки */
 .fab {
@@ -398,6 +399,24 @@ table.report tr.hi td { background: color-mix(in srgb, var(--accent) 12%, transp
 .mood-pick { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
 .mood-btn {
   border: 1px solid var(--separator); background: var(--card); color: var(--text-secondary);
-  border-radius: var(--radius-sm); padding: 10px 2px; font-size: 11px; font-weight: 600; cursor: pointer;
+  border-radius: var(--radius-sm); padding: 8px 2px; font-size: 11px; font-weight: 600; cursor: pointer;
 }
+.mood-btn .face { display: block; font-size: 26px; line-height: 1.15; }
 .mood-btn.on { background: var(--mc); border-color: var(--mc); color: #fff; }
+
+/* Плитки маркеров и триггеров — как сетка иконок в Daylio */
+.mtiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 8px; }
+.mtile {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 9px 4px; border-radius: 14px; cursor: pointer;
+  border: 1px solid var(--separator); background: var(--card); color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+.mtile .emo { font-size: 24px; line-height: 1; }
+.mtile .lbl {
+  font-size: 10px; line-height: 1.2; text-align: center; color: var(--text-secondary);
+  max-height: 3.6em; overflow: hidden; word-break: break-word; hyphens: auto;
+}
+.mtile.on { border-color: var(--accent); background: var(--accent-tint); }
+.mtile.on .lbl { color: var(--text); }
+.mtile:active { transform: scale(.96); }

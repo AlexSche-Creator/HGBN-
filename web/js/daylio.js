@@ -65,7 +65,7 @@ function normalize(d) {
     .sort((a, b) => a.order - b.order);
 
   const markers = (d.tags || [])
-    .map((t) => ({ id: t.id, name: t.name, groupId: t.id_tag_group, order: t.order }))
+    .map((t) => ({ id: t.id, name: t.name, groupId: t.id_tag_group, order: t.order, iconId: t.icon }))
     .sort((a, b) => a.order - b.order);
 
   // mood: 1 = лучшее (супер) … 5 = худшее (ужасно)

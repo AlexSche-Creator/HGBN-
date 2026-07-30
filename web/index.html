@@ -34,6 +34,9 @@
       <button class="tab" data-tab="evening" aria-label="Вечер дня">
         <span class="tab-icon" data-icon="evening"></span><span class="tab-label">Вечер</span>
       </button>
+      <button class="tab" data-tab="meds" aria-label="Лекарства">
+        <span class="tab-icon" data-icon="meds"></span><span class="tab-label">Лекарства</span>
+      </button>
       <button class="tab" data-tab="calendar" aria-label="Календарь">
         <span class="tab-icon" data-icon="calendar"></span><span class="tab-label">Календарь</span>
       </button>
@@ -52,12 +55,12 @@
   <!-- Импорт Daylio. Без accept: iOS «Файлы» затемняет неизвестные расширения
        вроде .daylio, и выбрать файл невозможно. Формат проверяем при разборе. -->
   <input type="file" id="daylio-file" hidden />
-  <!-- Документы (PDF/JPEG) — из галереи, камеры или файлов -->
-  <input type="file" id="doc-file" accept="application/pdf,image/*" hidden />
   <!-- Apple Health — тоже без accept, ZIP большой и по-разному типизируется -->
   <input type="file" id="health-file" hidden />
   <!-- Фото тонометра для распознавания давления -->
   <input type="file" id="bp-photo" accept="image/*" hidden />
+  <!-- Фото/скан назначения: карточка вмешательства заполняется распознаванием -->
+  <input type="file" id="med-photo" accept="application/pdf,image/*" hidden />
 
   <script type="module" src="./js/app.js"></script>
   <script>

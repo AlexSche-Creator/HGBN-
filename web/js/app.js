@@ -1,7 +1,7 @@
 import { store, episodeDuration, recordDuration } from './store.js';
 import { calculateDay, dayKey, startOfDay, formatDuration } from './calculator.js';
 import { STATUSES, STATUS_META, EPISODE_TYPES, DAY_LONG,
-  MED_CLASSES, medClassTitle, DOSE_UNITS, BP_CONTEXTS, bpContextTitle,
+  MED_CLASSES, DOSE_UNITS, BP_CONTEXTS, bpContextTitle,
   EFFECT_GROUPS, SEVERITY, INTERVENTION_TYPES, interventionTypeTitle,
   SIGNED_AXES, signedSum, DAY_DURATION, DAY_STRENGTH, DAY_FREQUENCY } from './defaults.js';
 import { summary as statsSummary, moodSummary } from './stats.js';
@@ -9,6 +9,7 @@ import { lineChart, barChart, hourChart, donut, bpChart } from './charts.js';
 import { exportJSON, exportCSV } from './export.js';
 import { icon } from './icons.js';
 import { parseDaylio, MOOD_META } from './daylio.js';
+import { markerEmoji, MOOD_FACE } from './markericons.js';
 import { putDoc, getDoc, deleteDoc, blobToBase64, imageToJpegBase64 } from './db.js';
 import * as ai from './ai.js';
 import { parseAppleHealth, HEALTH_METRICS } from './applehealth.js';
@@ -44,11 +45,20 @@ const state = {
   statsPeriod: 'week',
   diagRoute: 'root',
   aiRoute: 'root',
+  medRoute: 'root',
   eveningRoute: 'root',
-  eveningDate: null,      // null = сегодня
-  openGroups: new Set(),  // раскрытые группы маркеров в проводке
+  eveningDate: null,        // null = сегодня
+  closedGroups: new Set(),  // свёрнутые группы маркеров: по умолчанию всё раскрыто, как в Daylio
 };
 const eveningDate = () => (state.eveningDate ? new Date(state.eveningDate) : new Date());
+// Момент внутри выбранного дня для записи задним числом: сегодня — «сейчас»,
+// прошлый день — полдень (потом правится в форме).
+function momentIn(date) {
+  const d = new Date(date);
+  if (dayKey(d) === dayKey(new Date())) return new Date();
+  d.setHours(12, 0, 0, 0);
+  return d;
+}
 // Черновик вечерней проводки — до нажатия «Закрыть день».
 let dayDraft = null;
 function draft(date) {
@@ -85,6 +95,12 @@ function reasonChips(episodeType, selected) {
     `<div class="chip ${selected.includes(r.id) ? 'on' : ''}" data-action="toggle-reason" data-id="${r.id}">${icon(r.iconName, 'sm')}${esc(r.title)}</div>`
   ).join('');
   return `<label class="field">Причина</label><div class="chips">${chips || '<span class="muted">Нет активных причин</span>'}</div>`;
+}
+
+// Плитка «иконка + подпись» — маркеры и триггеры вечерней проводки.
+function tile(action, id, emoji, label, on) {
+  return `<button class="mtile ${on ? 'on' : ''}" data-action="${action}" data-id="${id}">
+    <span class="emo">${emoji}</span><span class="lbl">${esc(label)}</span></button>`;
 }
 
 function segmented(group, current, options) {
@@ -153,26 +169,12 @@ function importSection() {
     ? `<div class="list-item tappable" data-action="pick-health">${icon('check')}<span class="grow">Apple Health · ${h.counts?.days ?? Object.keys(h.days).length} дней</span><span class="muted" style="font-size:12px">обновить</span></div>`
     : `<div class="list-item tappable" data-action="pick-health">${icon('heart')}<span class="grow">Импорт Apple Health (ZIP)</span>${icon('chevron.right', 'sm')}</div>`;
   return `
-    ${documentsSection()}
     <div class="section-header">Импорт истории</div>
     <div class="list">
       ${daylioRow}
       ${healthRow}
     </div>
     <div class="muted" style="font-size:12px;margin:6px 4px 10px">Daylio и Apple Health переносятся из выгрузок.</div>`;
-}
-
-// Загрузка документов — заметный блок, а не строка в списке.
-function documentsSection() {
-  const docs = store.documents();
-  return `
-    <div class="section-header">Документы: анамнезы, заключения, назначения</div>
-    <div class="card stack">
-      <div class="muted" style="font-size:13px">Сфотографируйте или выберите <strong>JPEG / PDF</strong>. Нейросеть распознает наименование, дозу, частоту и клинику и дополнит отчёт. Первичный документ с печатью перекрывает данные в отчёте.</div>
-      <button class="btn-primary" data-action="pick-doc">${icon('camera')} Загрузить JPEG / PDF</button>
-      ${ai.hasApiKey() ? '' : '<div class="muted" style="font-size:12px">Для распознавания добавьте AI-ключ в «Диагностике». Загружать и хранить документы можно и без него.</div>'}
-    </div>
-    ${docs.length ? docsList(docs) : ''}`;
 }
 
 function docsList(docs) {
@@ -420,7 +422,6 @@ function renderDiag() {
   if (state.diagRoute === 'reasons-headache') return renderReasons('headache');
   if (state.diagRoute === 'reasons-anxiety') return renderReasons('anxiety');
   if (state.diagRoute === 'thresholds') return renderThresholds();
-  if (state.diagRoute === 'table') return renderHealthTable();
 
   const s = store.settings;
   const toggle = (on, action) => `<div class="toggle ${on ? 'on' : ''}" data-action="${action}"><div class="knob"></div></div>`;
@@ -429,7 +430,7 @@ function renderDiag() {
     <h1 class="nav-title">Диагностика</h1>
     <div class="list-head">Отчёты</div>
     <div class="list">
-      <div class="list-item tappable" data-action="goto" data-route="table">${icon('table')}<span class="grow">Сводная таблица вмешательств</span>${icon('chevron.right', 'sm')}</div>
+      <div class="list-item tappable" data-action="goto-report">${icon('table')}<span class="grow">Сводная таблица вмешательств</span>${icon('chevron.right', 'sm')}</div>
     </div>
     ${daylioDiagSection()}
     ${healthDiagSection()}
@@ -608,8 +609,12 @@ function openEpisodeSheet(episode, opts = {}) {
       customReason: episode.customReasonText || '', notes: episode.notes || '', isNew: false,
     };
   } else {
-    const now = new Date().toISOString();
-    epForm = { id: store.uid(), type: 'headache', startTime: now, endTime: now, durMode: 'byEnd',
+    // opts.date — запись задним числом: время берём внутри выбранного дня.
+    // Окончание по умолчанию +30 мин, иначе новая запись сохраняется нулевой длительностью.
+    const start = momentIn(opts.date || new Date());
+    const now = start.toISOString();
+    const end = new Date(start.getTime() + 30 * 60000).toISOString();
+    epForm = { id: store.uid(), type: 'headache', startTime: now, endTime: end, durMode: 'byEnd',
       manualMinutes: 15, dayLongFlag: 'almostAllDay', intensity: 3, reasonIDs: [], customReason: '', notes: '', isNew: true };
   }
   epForm.discardId = opts.discardId || null;
@@ -686,7 +691,7 @@ function openAnxietySheet(record, presetOngoing = false, opts = {}) {
       reasonIDs: [...(record.reasonIDs || [])], customReason: record.customReasonText || '',
       notes: record.notes || '', linkedEpisodeID: record.linkedEpisodeID || '', isNew: false };
   } else {
-    anxForm = { id: store.uid(), startTime: new Date().toISOString(), ongoing: presetOngoing, manualMinutes: 20,
+    anxForm = { id: store.uid(), startTime: momentIn(opts.date || new Date()).toISOString(), ongoing: presetOngoing, manualMinutes: 20,
       intensity: 3, reasonIDs: [], customReason: '', notes: '', linkedEpisodeID: '', isNew: true };
   }
   anxForm.discardId = opts.discardId || null;
@@ -723,7 +728,8 @@ function renderCaptureSheet() {
 
 function renderAnxietySheet() {
   const f = anxForm;
-  const todayEps = store.episodesOn(new Date());
+  // Связываем с эпизодами того же дня, что и сама запись (важно для записи задним числом).
+  const todayEps = store.episodesOn(new Date(f.startTime));
   const linkOpts = todayEps.length ? `
     <div class="field-row"><label class="field">Связать с эпизодом</label>
       <select data-field="linkedEpisodeID">
@@ -776,14 +782,6 @@ function selectField(field, current, options) {
     `<option value="${v}" ${current === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
 }
 
-function medDoseText(m) {
-  const parts = [];
-  const dv = m.doseValue ? `${m.doseValue} ${m.doseUnit || ''}`.trim() : '';
-  if (dv) parts.push(dv);
-  if (m.schedule) parts.push(m.schedule);
-  return parts.join(' · ') || '—';
-}
-
 function periodText(m) {
   const f = (d) => d ? new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' }) : '';
   if (!m.startDate && !m.endDate) return m.isActive ? 'принимаю' : '—';
@@ -811,32 +809,23 @@ function bpSection() {
     ${bpRecentList()}`;
 }
 
+// На «Вводе» — только отметка приёма в моменте. Реестр, фото и отчёт живут
+// на вкладке «Лекарства», чтобы не дублировать экраны.
 function medsSection() {
-  const meds = store.medications();
+  const active = store.medications(true).filter((m) => !ONE_OFF.has(m.type || 'medication'));
   const todayIntakes = store.intakesOn(new Date());
-  const medRows = meds.length ? meds.map((m) => {
+  const rows = active.map((m) => {
     const taken = todayIntakes.filter((x) => x.medicationId === m.id && x.taken).length;
-    return `<div class="card tight ${m.isActive ? '' : 'dim'}">
-      <div class="row between">
-        <div class="grow" data-action="edit-med" data-id="${m.id}">
-          <div style="font-weight:600">${icon('pill', 'sm')} ${esc(m.name)}</div>
-          <div class="muted" style="font-size:12px">${esc(medClassTitle(m.medClass))} · ${esc(medDoseText(m))}</div>
-        </div>
-        <span class="badge">${taken ? `${icon('check', 'sm')} ${taken}×` : 'сегодня'}</span>
-      </div>
-      <div class="row" style="gap:8px;margin-top:8px">
-        <button class="btn-secondary" style="padding:10px" data-action="took-med" data-id="${m.id}">${icon('check', 'sm')} Принял</button>
-        <button class="btn-secondary" style="padding:10px" data-action="skip-med" data-id="${m.id}">Пропустил</button>
-        <button class="icon-btn" data-action="open-effect" data-med="${m.id}" aria-label="Ощущения">${icon('activity', 'sm')}</button>
-      </div>
+    return `<div class="row between">
+      <span class="grow">${taken ? '✅' : '💊'} ${esc(m.name)}${taken > 1 ? ` <span class="muted" style="font-size:12px">${taken}×</span>` : ''}</span>
+      <button class="btn-ghost" data-action="took-med" data-id="${m.id}">${icon('check', 'sm')} принял</button>
     </div>`;
-  }).join('') : '<div class="muted" style="padding:2px 4px 8px">Лекарства пока не добавлены.</div>';
-
+  }).join('');
   return `
     <div class="section-header">Лекарства — что выпил</div>
-    ${medRows}
-    <div class="stack" style="margin-top:10px">
-      <button class="btn-secondary" data-action="open-med">${icon('plus')} Добавить лекарство</button>
+    <div class="card stack">
+      ${rows || '<div class="muted" style="font-size:13px">Нет препаратов в приёме.</div>'}
+      <button class="btn-secondary" data-action="goto-meds">${icon('pill')} Вкладка «Лекарства»</button>
     </div>`;
 }
 
@@ -850,7 +839,16 @@ function renderEvening() {
   const isToday = dayKey(date) === dayKey(new Date());
   const saved = !!store.dayLog(date);
 
-  // 1. Счётчик того, что уже зафиксировано в течение дня.
+  // 1. Счётчик того, что уже зафиксировано в течение дня + добор задним числом.
+  const epRows = [
+    ...eps.map((e) => ({ t: e.startTime, kind: 'episode', id: e.id, emo: '🤕',
+      text: `${fmtTime(e.startTime)} · ${formatDuration(episodeDuration(e))} · ${e.intensity}/10` })),
+    ...anx.map((a) => ({ t: a.startTime, kind: 'anxiety', id: a.id, emo: '😰',
+      text: `${fmtTime(a.startTime)} · ${formatDuration(recordDuration(a))} · ${a.intensity}/10` })),
+  ].sort((x, y) => new Date(x.t) - new Date(y.t))
+    .map((r) => `<div class="row between tappable" data-action="${r.kind === 'episode' ? 'edit-episode' : 'edit-anx'}" data-id="${r.id}">
+      <span>${r.emo} ${r.text}</span>${icon('chevron.right', 'sm')}</div>`).join('');
+
   const logged = `
     <div class="card stack">
       <div class="section-header">Зафиксировано в течение дня</div>
@@ -860,7 +858,12 @@ function renderEvening() {
         ${metric(formatDuration(eps.reduce((s, e) => s + episodeDuration(e), 0)), 'суммарно', 'clock')}
         ${metric(eps.reduce((m, e) => Math.max(m, e.intensity), 0) || '—', 'макс. инт.', 'gauge')}
       </div>
-      <div class="muted" style="font-size:12px">Это уже учтено. Ниже — итог по тем эпизодам, которые вы не вносили отдельно.</div>
+      ${epRows || '<div class="muted" style="font-size:13px">За этот день ничего не внесено.</div>'}
+      <div class="muted" style="font-size:12px">Забыли записать в моменте — добавьте задним числом, время подставится в этот день.</div>
+      <div class="row" style="gap:8px">
+        <button class="btn-secondary" style="padding:12px" data-action="ev-add-episode">🤕 Напряжение</button>
+        ${store.settings.anxietyEnabled ? '<button class="btn-secondary" style="padding:12px" data-action="ev-add-anxiety">😰 Тревога</button>' : ''}
+      </div>
     </div>`;
 
   // 2. Итог дня по эпизодам (длительность / сила / частота).
@@ -872,17 +875,17 @@ function renderEvening() {
       <label class="field">Частота за день</label>${segmented('dl-freq', log.frequency || 'f0', DAY_FREQUENCY)}
     </div>`;
 
-  // 3. Линейка триггеров из эпизодов.
+  // 3. Линейка триггеров из эпизодов — плитками с иконками, как маркеры.
   const trig = store.reasons(true);
   const selTrig = log.triggerIds || [];
   const triggers = `
     <div class="card stack">
       <div class="section-header">Триггеры</div>
-      <div class="chips">${trig.map((r) =>
-        `<div class="chip ${selTrig.includes(r.id) ? 'on' : ''}" data-action="dl-trigger" data-id="${r.id}">${icon(r.iconName, 'sm')}${esc(r.title)}</div>`).join('')}</div>
+      <div class="mtiles">${trig.map((r) =>
+        tile('dl-trigger', r.id, markerEmoji(r.title, 'триггеры'), r.title, selTrig.includes(r.id))).join('')}</div>
     </div>`;
 
-  // 4. Полный перечень маркеров Daylio по разделам.
+  // 4. Полный перечень маркеров Daylio по разделам — иконка + подпись.
   const selMark = log.markerIds || [];
   const markers = store.hasDaylio() ? `
     <div class="card stack">
@@ -891,25 +894,29 @@ function renderEvening() {
         const items = store.daylio.markers.filter((m) => m.groupId === g.id);
         if (!items.length) return '';
         const n = items.filter((m) => selMark.includes(m.id)).length;
-        const open = state.openGroups.has(g.id);
+        const open = !state.closedGroups.has(g.id); // по умолчанию раскрыто
         return `<div class="mgroup">
           <div class="mgroup-head" data-action="dl-group" data-id="${g.id}">
             <span class="grow">${esc(g.name)}${n ? ` <span class="badge">${n}</span>` : ''}</span>
             ${icon(open ? 'chevron.down' : 'chevron.right', 'sm')}
           </div>
-          ${open ? `<div class="chips">${items.map((m) =>
-            `<div class="chip ${selMark.includes(m.id) ? 'on' : ''}" data-action="dl-marker" data-id="${m.id}">${esc(m.name)}</div>`).join('')}</div>` : ''}
+          ${open ? `<div class="mtiles">${items.map((m) =>
+            tile('dl-marker', m.id, markerEmoji(m.name, g.name), m.name, selMark.includes(m.id))).join('')}</div>` : ''}
         </div>`;
       }).join('')}
-    </div>` : '';
+    </div>`
+    : `<div class="card stack">
+        <div class="section-header">Маркеры дня</div>
+        <div class="muted" style="font-size:13px">Разделы и маркеры подтянутся из бэкапа Daylio — импорт на вкладке «Ввод данных».</div>
+      </div>`;
 
-  // 5. Настроение дня.
+  // 5. Настроение дня — пять лиц, как в Daylio.
   const mood = `
     <div class="card stack">
       <div class="section-header">Настроение дня</div>
       <div class="mood-pick">${[1, 2, 3, 4, 5].map((lv) =>
         `<button class="mood-btn ${log.mood === lv ? 'on' : ''}" data-action="dl-mood" data-lv="${lv}"
-          style="--mc:${MOOD_META[lv].color}">${MOOD_META[lv].title}</button>`).join('')}</div>
+          style="--mc:${MOOD_META[lv].color}"><span class="face">${MOOD_FACE[lv]}</span>${MOOD_META[lv].title}</button>`).join('')}</div>
     </div>`;
 
   view.innerHTML = `
@@ -927,40 +934,34 @@ function renderEvening() {
     ${triggers}
     ${markers}
     ${mood}
-    ${eveningMedsCard(date)}
     <div class="field-row"><label class="field">Заметка дня</label><textarea data-field="dl-note" placeholder="что было важного">${esc(log.note || '')}</textarea></div>
+    ${eveningMedsCard(date)}
     <button class="btn-primary" data-action="dl-save">${icon('check')} ${saved ? 'Обновить проводку' : 'Закрыть день'}</button>
     <button class="btn-secondary" data-action="ev-stats" style="margin-top:10px">${icon('stats')} Статистика и графики</button>
     <div class="card"><div class="muted" style="font-size:12px">Проводка фиксирует результат за день: эпизоды, триггеры, маркеры, настроение и действие препаратов. Напоминание приходит в ${String(store.settings.reminderHour).padStart(2, '0')}:${String(store.settings.reminderMinute ?? 21).padStart(2, '0')}.</div></div>`;
 }
 
-// Действие препаратов, которые вы принимаете — прямо в вечерней проводке.
+// Действие препаратов — короткой строкой в конце проводки. Всё остальное
+// про лекарства (реестр, фото, отчёт) живёт на своей вкладке.
 function eveningMedsCard(date) {
   const active = store.medications(true);
-  if (!active.length) {
-    return `<div class="card stack">
-      <div class="section-header">Действие препаратов</div>
-      <div class="muted" style="font-size:13px">Нет препаратов в приёме. Откройте отчёт и нажмите «Начать приём» у нужной строки — он появится здесь для ежедневной оценки.</div>
-      <button class="btn-secondary" data-action="goto-report">${icon('table')} Открыть отчёт</button>
-    </div>`;
-  }
+  if (!active.length) return '';
   const rows = active.map((m) => {
     const e = store.effectFor(m.id, date);
     const sum = e ? (Number(e.physScore) || 0) + (Number(e.psychScore) || 0) + (Number(e.neuroScore) || 0) : null;
     const taken = store.intakesOn(date).some((x) => x.medicationId === m.id && x.taken);
-    return `<div class="card tight stack">
-      <div class="row between">
-        <div><div style="font-weight:600">${icon('pill', 'sm')} ${esc(m.name)}</div>
-          <div class="muted" style="font-size:12px">${esc(prescriptionText(m))}</div></div>
-        ${e ? `<span class="signed-val ${sum > 0 ? 'pos' : (sum < 0 ? 'neg' : 'muted')}">${sum > 0 ? '+' + sum : sum}</span>` : `<span class="muted" style="font-size:12px">не оценён</span>`}
-      </div>
-      <div class="row" style="gap:8px">
-        <button class="btn-secondary" style="padding:10px" data-action="${taken ? 'skip-med' : 'took-med'}" data-id="${m.id}">${taken ? `${icon('check', 'sm')} принял` : 'отметить приём'}</button>
-        <button class="btn-secondary" style="padding:10px" data-action="open-effect" data-med="${m.id}">${icon('activity', 'sm')} ${e ? 'изменить оценку' : 'оценить действие'}</button>
-      </div>
+    return `<div class="row between">
+      <button class="btn-ghost grow" style="justify-content:flex-start;text-align:left;color:var(--text)"
+        data-action="${taken ? 'skip-med' : 'took-med'}" data-id="${m.id}">${taken ? '✅' : '⬜️'} ${esc(m.name)}</button>
+      <button class="btn-ghost" data-action="open-effect" data-med="${m.id}">
+        ${e ? `<span class="signed-val ${sum > 0 ? 'pos' : (sum < 0 ? 'neg' : 'muted')}">${sum > 0 ? '+' + sum : sum}</span>` : 'оценить'}</button>
     </div>`;
   }).join('');
-  return `<div class="section-header">Действие препаратов</div>${rows}`;
+  return `<div class="card stack">
+    <div class="section-header">Действие препаратов в приёме</div>
+    ${rows}
+    <div class="muted" style="font-size:12px">Слева — отметка приёма, справа — оценка действия за этот день. Реестр и отчёт — на вкладке «Лекарства».</div>
+  </div>`;
 }
 
 function renderEveningStats() {
@@ -1161,6 +1162,100 @@ function courseButton(m) {
     : `<button class="btn-ghost" data-action="start-course" data-id="${m.id}">${label}</button>`;
 }
 
+// ---------- ЛЕКАРСТВА: фото → карточка, реестр, приём, отчёт ----------
+let medPhotoBusy = false;
+
+function renderMeds() {
+  if (state.medRoute === 'table') return renderHealthTable();
+  const all = store.medications();
+  const active = all.filter((m) => m.isActive && !ONE_OFF.has(m.type || 'medication'));
+  const rest = all.filter((m) => !active.includes(m));
+  const ready = ai.hasApiKey() && store.settings.aiConsent;
+
+  // Главный сценарий: снял назначение — карточка заполнилась сама.
+  const photoCard = `
+    <div class="card stack">
+      <div class="section-header">${icon('camera', 'sm')} Завести по фото</div>
+      <div class="muted" style="font-size:13px">Сфотографируйте назначение, выписку или упаковку — наименование, доза, схема приёма, клиника и год заполнятся сами. Вам останется проверить и сохранить.</div>
+      <button class="btn-primary" data-action="pick-med-photo" ${medPhotoBusy ? 'disabled style="opacity:.6"' : ''}>
+        ${medPhotoBusy ? '<span class="spinner"></span> Распознаю…' : `${icon('camera')} Снять фото или файл`}</button>
+      ${medPhotoBusy ? '<div class="muted" style="font-size:12px;text-align:center">Снимок уменьшается и отправляется — несколько секунд</div>' : ''}
+      ${ready ? '' : `<div class="muted" style="font-size:12px">Для распознавания нужен AI-ключ и согласие — вкладка «AI». <button class="btn-ghost" style="padding:0" data-action="goto-ai-key">Открыть</button></div>`}
+      <button class="btn-secondary" data-action="open-med">${icon('plus')} Добавить вручную</button>
+    </div>`;
+
+  const activeCard = active.length ? `
+    <div class="section-header">В приёме сейчас (${active.length})</div>
+    ${active.map(medCard).join('')}` : `
+    <div class="card"><div class="muted" style="font-size:13px">Сейчас ничего не принимаете. Нажмите «Начать приём» в реестре — препарат появится в вечерней проводке для ежедневной оценки.</div></div>`;
+
+  const registry = rest.length ? `
+    <div class="section-header">Реестр вмешательств (${rest.length})</div>
+    ${rest.map(medCard).join('')}` : '';
+
+  view.innerHTML = `
+    <h1 class="nav-title">Лекарства</h1>
+    ${photoCard}
+    ${activeCard}
+    <div class="list" style="margin-top:12px">
+      <div class="list-item tappable" data-action="med-goto-table">${icon('table')}<span class="grow">Сводная таблица вмешательств${all.length ? ` · ${all.length}` : ''}</span>${icon('chevron.right', 'sm')}</div>
+    </div>
+    ${registry}
+    ${store.documents().length ? `<div class="section-header">Загруженные документы</div>${docsList(store.documents())}` : ''}
+    <div class="card"><div class="muted" style="font-size:12px">Цикл: фото назначения → реестр → «Начать приём» → вечерняя оценка действия → рейтинг в отчёте. Приложение ничего не назначает и не отменяет — это запись наблюдений для разговора с врачом.</div></div>`;
+}
+
+const TYPE_EMOJI = { medication: '💊', supplement: '🌿', procedure: '🏥', therapy: '🧠', diagnostic: '🩻', surgery: '🔪', device: '🩹', other: '⚪' };
+
+function medCard(m) {
+  const live = store.medRating(m.id);
+  const paper = signedSum(m);
+  const score = live ? live.sum : paper;
+  const cls = score > 0 ? 'pos' : (score < 0 ? 'neg' : 'muted');
+  const meta = [prescriptionText(m) !== '—' ? prescriptionText(m) : '', m.clinic, m.year].filter(Boolean).join(' · ');
+  return `<div class="card tight stack ${m.isActive ? '' : 'dim'}">
+    <div class="row between">
+      <div class="grow tappable" data-action="edit-med" data-id="${m.id}">
+        <div style="font-weight:600">${TYPE_EMOJI[m.type || 'medication'] || '💊'} ${esc(m.name)}${m.provenance ? ` <span style="color:var(--accent)" title="подтверждено документом">${icon('check', 'sm')}</span>` : ''}</div>
+        <div class="muted" style="font-size:12px">${esc(meta) || 'без деталей'}</div>
+      </div>
+      <span class="signed-val ${cls}">${score > 0 ? '+' + score : score}</span>
+    </div>
+    <div class="row between">
+      <span class="muted" style="font-size:12px">${live ? `оценок: ${live.n}` : 'из бумажной таблицы'}</span>
+      <div class="row" style="gap:6px">
+        ${m.isActive && !ONE_OFF.has(m.type || 'medication')
+          ? `<button class="btn-ghost" data-action="open-effect" data-med="${m.id}">${icon('activity', 'sm')} оценить</button>` : ''}
+        ${courseButton(m)}
+      </div>
+    </div>
+  </div>`;
+}
+
+// Фото назначения: сохраняем документ и сразу запускаем распознавание —
+// пользователю не нужно нажимать «Распознать» отдельно.
+async function handleMedPhoto(file) {
+  if (!file) return;
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  const id = store.uid();
+  const canParse = ai.hasApiKey() && store.settings.aiConsent;
+  medPhotoBusy = canParse; render();
+  try {
+    await putDoc(id, file);
+    store.addDocument({
+      id, name: file.name || 'назначение', mediaType: isPdf ? 'application/pdf' : (file.type || 'image/jpeg'),
+      addedAt: new Date().toISOString(), parsed: false,
+    });
+    // Хранить документ можно и без ключа — распознавание просто откладывается.
+    if (canParse) await parseDoc(id);
+    else toast('Документ сохранён. Для распознавания нужен AI-ключ и согласие');
+  } catch (e) {
+    toast('Не получилось: ' + (e?.message || 'ошибка'));
+  } finally {
+    medPhotoBusy = false; render();
+  }
+}
+
 function signedCell(v) {
   const n = Number(v) || 0;
   const cls = n > 0 ? 'pos' : (n < 0 ? 'neg' : '');
@@ -1188,7 +1283,7 @@ function renderHealthTable() {
   }).join('');
 
   view.innerHTML = `
-    <div class="row" style="gap:8px;margin:8px 0 12px"><button class="btn-ghost" data-action="diag-back">${icon('chevron.left', 'sm')} Диагностика</button></div>
+    <div class="row" style="gap:8px;margin:8px 0 12px"><button class="btn-ghost" data-action="med-back">${icon('chevron.left', 'sm')} Лекарства</button></div>
     <h1 class="nav-title" style="margin-top:0">Сводная таблица вмешательств</h1>
     <div class="muted" style="font-size:13px;margin-bottom:12px">Наименование · назначение врача (доза/частота) · клиника · год · знаковое действие (−10…+10) · ощущения. ${icon('check', 'sm')} — поле подтверждено первичным документом с печатью. Это не медицинский документ.</div>
     ${meds.length ? '' : `<div class="card stack">
@@ -1204,7 +1299,7 @@ function renderHealthTable() {
       <button class="btn-secondary" data-action="open-med">${icon('plus')} Добавить строку</button>
       ${meds.length ? `<button class="btn-secondary" data-action="seed-report">${icon('table')} Дозаполнить из таблицы</button>` : ''}
     </div>
-    <div class="muted" style="font-size:12px;margin-top:10px;padding:0 4px">Столбцы дополняются распознаванием PDF/фото заключений — на вкладке «Ввод данных» → «Документы». Тап по строке в списке лекарств («Ввод данных») открывает её для правки.</div>`;
+    <div class="muted" style="font-size:12px;margin-top:10px;padding:0 4px">Столбцы дополняются распознаванием фото и PDF — кнопка «Завести по фото» на вкладке «Лекарства». Там же тап по карточке открывает строку для правки.</div>`;
 }
 
 // ---------- BP SHEET ----------
@@ -1355,21 +1450,7 @@ function saveMed() {
   toast('Сохранено');
 }
 
-// ---------- Документы: загрузка, распознавание, нормализация ----------
-async function handleDocFile(file) {
-  if (!file) return;
-  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-  const mediaType = isPdf ? 'application/pdf' : (file.type || 'image/jpeg');
-  const id = store.uid();
-  try {
-    await putDoc(id, file);
-    store.addDocument({ id, name: file.name || 'документ', mediaType, addedAt: new Date().toISOString(), parsed: false });
-    toast('Документ добавлен');
-  } catch (e) {
-    toast('Не удалось сохранить: ' + (e?.message || 'ошибка'));
-  }
-}
-
+// ---------- Документы: распознавание и нормализация отчёта ----------
 let extractState = null;
 async function parseDoc(id) {
   const meta = store.document(id);
@@ -1647,6 +1728,7 @@ function render() {
   if (timer) { clearInterval(timer); timer = null; }
   if (state.tab === 'input') renderInput();
   else if (state.tab === 'evening') renderEvening();
+  else if (state.tab === 'meds') renderMeds();
   else if (state.tab === 'calendar') renderCalendar();
   else if (state.tab === 'ai') renderAI();
   else renderDiag();
@@ -1660,7 +1742,7 @@ function syncTabs() {
 document.addEventListener('click', (e) => {
   const t = e.target.closest('[data-action], .tab');
   if (!t) return;
-  if (t.classList.contains('tab')) { state.tab = t.dataset.tab; state.diagRoute = 'root'; state.aiRoute = 'root'; render(); return; }
+  if (t.classList.contains('tab')) { state.tab = t.dataset.tab; state.diagRoute = 'root'; state.aiRoute = 'root'; state.medRoute = 'root'; render(); return; }
   const a = t.dataset.action;
   const handlers = {
     // --- Хаб «+» ---
@@ -1690,7 +1772,6 @@ document.addEventListener('click', (e) => {
     'import-soon': () => toast(`${t.dataset.what}: скоро, в ближайших фазах`),
     'pick-daylio': () => { const inp = $('#daylio-file'); if (inp) { inp.value = ''; inp.click(); } },
     // --- Документы ---
-    'pick-doc': () => { const inp = $('#doc-file'); if (inp) { inp.value = ''; inp.click(); } },
     'pick-bp-photo': () => { const inp = $('#bp-photo'); if (inp) { inp.value = ''; inp.click(); } },
     // С вкладки «Ввод»: открыть пустую форму давления и сразу спросить фото.
     'bp-from-photo': () => { openBPSheet(null); const inp = $('#bp-photo'); if (inp) { inp.value = ''; inp.click(); } },
@@ -1708,7 +1789,11 @@ document.addEventListener('click', (e) => {
     'ev-back': () => { state.eveningRoute = 'root'; render(); },
     'dl-trigger': () => { const d = draft(eveningDate()); const s = new Set(d.triggerIds || []); s.has(t.dataset.id) ? s.delete(t.dataset.id) : s.add(t.dataset.id); d.triggerIds = [...s]; render(); },
     'dl-marker': () => { const d = draft(eveningDate()); const id = Number(t.dataset.id); const s = new Set(d.markerIds || []); s.has(id) ? s.delete(id) : s.add(id); d.markerIds = [...s]; render(); },
-    'dl-group': () => { const id = Number(t.dataset.id); state.openGroups.has(id) ? state.openGroups.delete(id) : state.openGroups.add(id); render(); },
+    'dl-group': () => { const id = Number(t.dataset.id); state.closedGroups.has(id) ? state.closedGroups.delete(id) : state.closedGroups.add(id); render(); },
+    // Добор эпизодов задним числом прямо из вечерней проводки.
+    'ev-add-episode': () => openEpisodeSheet(null, { date: eveningDate() }),
+    'ev-add-anxiety': () => openAnxietySheet(null, false, { date: eveningDate() }),
+    'edit-anx': () => { const a = store.anxiety.find((x) => x.id === t.dataset.id); if (a) openAnxietySheet(a); },
     'dl-mood': () => { const d = draft(eveningDate()); const lv = Number(t.dataset.lv); d.mood = d.mood === lv ? null : lv; render(); },
     'dl-save': () => {
       const date = eveningDate(); const d = draft(date);
@@ -1719,7 +1804,12 @@ document.addEventListener('click', (e) => {
       dayDraft = null;
       toast('День закрыт');
     },
-    'goto-report': () => { state.tab = 'diag'; state.diagRoute = 'table'; render(); },
+    // --- Лекарства ---
+    'goto-meds': () => { state.tab = 'meds'; state.medRoute = 'root'; render(); },
+    'goto-report': () => { state.tab = 'meds'; state.medRoute = 'table'; render(); },
+    'med-goto-table': () => { state.medRoute = 'table'; render(); },
+    'med-back': () => { state.medRoute = 'root'; render(); },
+    'pick-med-photo': () => { const inp = $('#med-photo'); if (inp) { inp.value = ''; inp.click(); } },
     'start-course': () => { store.startCourse(t.dataset.id); toast('Приём начат — препарат появится в «Вечере дня»'); },
     'stop-course': () => { store.stopCourse(t.dataset.id); toast('Приём завершён'); },
     'seed-report': () => {
@@ -1841,9 +1931,9 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('change', (e) => {
   if (e.target.id === 'daylio-file') { handleDaylioFile(e.target.files[0]); return; }
-  if (e.target.id === 'doc-file') { handleDocFile(e.target.files[0]); return; }
   if (e.target.id === 'health-file') { handleHealthFile(e.target.files[0]); return; }
   if (e.target.id === 'bp-photo') { handleBPPhoto(e.target.files[0]); return; }
+  if (e.target.id === 'med-photo') { handleMedPhoto(e.target.files[0]); return; }
   const r = e.target.closest('[data-action="rename-reason"]');
   if (r) { store.updateReason(r.dataset.id, { title: e.target.value.trim() || 'Без названия' }); return; }
   const sel = e.target.closest('select[data-field]');
@@ -1971,7 +2061,7 @@ function scheduleReminderNote() {
 
 // ---------- boot ----------
 function paintTabIcons() {
-  const map = { input: 'edit', evening: 'moon2', calendar: 'calendar', ai: 'spark', diag: 'report' };
+  const map = { input: 'edit', evening: 'moon2', meds: 'pill', calendar: 'calendar', ai: 'spark', diag: 'report' };
   document.querySelectorAll('.tab-icon[data-icon]').forEach((el) => {
     el.innerHTML = icon(map[el.dataset.icon] || 'dot');
   });
