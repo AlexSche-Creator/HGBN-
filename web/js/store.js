@@ -49,6 +49,9 @@ class Store {
     this.data.effects = this.data.effects || [];
     this.data.dayLogs = this.data.dayLogs || [];
     this.data.documents = this.data.documents || [];
+    // Если приложение закрыли во время распознавания — снимаем «занято»,
+    // иначе кнопка осталась бы заблокированной навсегда.
+    this.data.documents.forEach((d) => { if (d.busy) d.busy = false; });
     if (!('daylio' in this.data)) this.data.daylio = null;
     if (!('health' in this.data)) this.data.health = null;
     if (!this.data.reasons || !this.data.reasons.length) this.data.reasons = defaultReasons(uid);

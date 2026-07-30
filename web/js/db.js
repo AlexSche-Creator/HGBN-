@@ -51,3 +51,48 @@ export function blobToBase64(blob) {
     r.readAsDataURL(blob);
   });
 }
+
+// Подготовка фото к отправке: уменьшаем и перекодируем в JPEG.
+// Зачем: снимок с iPhone — это 20+ Мп и 5+ МБ (в base64 ещё +33%), из-за чего
+// запрос идёт десятки секунд на мобильной сети и стоит лишних токенов.
+// Плюс камера iPhone часто отдаёт HEIC, который API не принимает, —
+// перерисовка через canvas решает и это.
+export async function imageToJpegBase64(file, maxEdge = 1600, quality = 0.85) {
+  const fallback = async () => ({
+    base64: await blobToBase64(file),
+    mediaType: file.type || 'image/jpeg',
+    resized: false,
+  });
+  try {
+    if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas === 'undefined') {
+      // Старый браузер — пробуем через <img> и обычный canvas.
+      const url = URL.createObjectURL(file);
+      try {
+        const img = await new Promise((res, rej) => {
+          const i = new Image();
+          i.onload = () => res(i); i.onerror = rej; i.src = url;
+        });
+        const { w, h } = fit(img.naturalWidth, img.naturalHeight, maxEdge);
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        const dataUrl = c.toDataURL('image/jpeg', quality);
+        return { base64: dataUrl.split(',')[1], mediaType: 'image/jpeg', resized: true };
+      } finally { URL.revokeObjectURL(url); }
+    }
+    const bmp = await createImageBitmap(file);
+    const { w, h } = fit(bmp.width, bmp.height, maxEdge);
+    const canvas = new OffscreenCanvas(w, h);
+    canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    bmp.close?.();
+    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+    return { base64: await blobToBase64(blob), mediaType: 'image/jpeg', resized: true };
+  } catch {
+    return fallback();
+  }
+}
+
+function fit(w, h, maxEdge) {
+  const k = Math.min(1, maxEdge / Math.max(w, h));
+  return { w: Math.max(1, Math.round(w * k)), h: Math.max(1, Math.round(h * k)) };
+}

@@ -9,7 +9,7 @@ import { lineChart, barChart, hourChart, donut, bpChart } from './charts.js';
 import { exportJSON, exportCSV } from './export.js';
 import { icon } from './icons.js';
 import { parseDaylio, MOOD_META } from './daylio.js';
-import { putDoc, getDoc, deleteDoc, blobToBase64 } from './db.js';
+import { putDoc, getDoc, deleteDoc, blobToBase64, imageToJpegBase64 } from './db.js';
 import * as ai from './ai.js';
 import { parseAppleHealth, HEALTH_METRICS } from './applehealth.js';
 import { seedInterventions, SEED_COUNT } from './seed.js';
@@ -185,8 +185,9 @@ function docsList(docs) {
           <div class="muted" style="font-size:12px">${kind} · ${new Date(d.addedAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: '2-digit' })}${d.clinic ? ` · ${esc(d.clinic)}` : ''}</div></div>
         ${status}
       </div>
+      ${d.error ? `<div class="callout warn" style="margin:8px 0 0"><b>Не получилось.</b> ${esc(d.error)}</div>` : ''}
       <div class="row" style="gap:8px;margin-top:8px">
-        <button class="btn-secondary" style="padding:10px" data-action="parse-doc" data-id="${d.id}">${icon('spark', 'sm')} Распознать</button>
+        <button class="btn-secondary" style="padding:10px" data-action="parse-doc" data-id="${d.id}" ${d.busy ? 'disabled style="opacity:.6"' : ''}>${d.busy ? '<span class="spinner"></span> Распознаю…' : `${icon('spark', 'sm')} Распознать`}</button>
         <button class="icon-btn" data-action="view-doc" data-id="${d.id}" aria-label="Открыть">${icon('eye', 'sm')}</button>
         <button class="icon-btn" style="color:var(--danger)" data-action="del-doc" data-id="${d.id}" aria-label="Удалить">${icon('trash', 'sm')}</button>
       </div>
@@ -1218,7 +1219,10 @@ function renderBPSheet() {
   const f = bpForm;
   return `
     <div class="sheet-head"><div class="title">Давление</div><button class="btn-ghost" data-action="save-bp">Сохранить</button></div>
-    <button class="btn-secondary" data-action="pick-bp-photo">${icon('camera')} Распознать по фото тонометра</button>
+    <button class="btn-secondary" data-action="pick-bp-photo" ${f.busy ? 'disabled style="opacity:.6"' : ''}>
+      ${f.busy ? `<span class="spinner"></span> Распознаю показания…` : `${icon('camera')} Распознать по фото тонометра`}</button>
+    ${f.busy ? '<div class="muted" style="font-size:12px;text-align:center;margin-top:6px">Фото уменьшается и отправляется — это занимает несколько секунд</div>' : ''}
+    ${f.error ? `<div class="callout warn"><b>Не получилось.</b> ${esc(f.error)}</div>` : ''}
     ${f.recognized ? `<div class="callout">Распознано с фото${f.lowConfidence ? ' — <b>цифры видны плохо, проверьте</b>' : ''}. Поправьте, если ошибка.</div>` : ''}
     <div class="field-row" style="margin-top:12px"><label class="field">Время</label><input type="datetime-local" data-field="dateTime" value="${toLocalInput(f.dateTime)}"/></div>
     <div class="row" style="gap:10px">
@@ -1235,21 +1239,26 @@ function renderBPSheet() {
 // Фото тонометра → три показателя в форму (с подтверждением пользователем).
 async function handleBPPhoto(file) {
   if (!file || !bpForm) return;
-  if (!ai.hasApiKey()) { toast('Сначала добавьте AI-ключ (вкладка AI)'); return; }
-  if (!store.settings.aiConsent) { toast('Включите согласие на вкладке AI'); return; }
-  toast('Распознаю показания…');
+  if (!ai.hasApiKey()) { bpForm.error = 'Нужен AI-ключ — вкладка «AI»'; renderSheet(); return; }
+  if (!store.settings.aiConsent) { bpForm.error = 'Включите согласие на вкладке «AI»'; renderSheet(); return; }
+  bpForm.busy = true; bpForm.error = null; renderSheet();
   try {
-    const base64 = await blobToBase64(file);
-    const r = await ai.extractBloodPressure({ base64, mediaType: file.type || 'image/jpeg', model: store.settings.aiModelExtract });
-    if (!r.sys || !r.dia) { toast('Не увидел цифры — введите вручную'); return; }
+    // Уменьшаем и перекодируем в JPEG: снимок с телефона иначе весит
+    // мегабайты и грузится десятки секунд (а HEIC API вовсе не примет).
+    const { base64, mediaType } = await imageToJpegBase64(file, 1400, 0.85);
+    const r = await ai.extractBloodPressure({ base64, mediaType, model: store.settings.aiModelExtract });
+    if (!r.sys || !r.dia) { bpForm.busy = false; bpForm.error = 'Не удалось разобрать цифры — введите вручную'; renderSheet(); return; }
     bpForm.sys = r.sys; bpForm.dia = r.dia;
     if (r.pulse) bpForm.pulse = r.pulse;
     bpForm.recognized = true;
     bpForm.lowConfidence = !r.confident;
+    bpForm.busy = false;
     renderSheet();
     toast(`Распознано: ${r.sys}/${r.dia}${r.pulse ? ` · пульс ${r.pulse}` : ''}`);
   } catch (e) {
-    toast('Ошибка распознавания: ' + (e?.message || 'неизвестно'));
+    bpForm.busy = false;
+    bpForm.error = e?.message || 'Не удалось распознать';
+    renderSheet();
   }
 }
 function saveBP() {
@@ -1365,18 +1374,24 @@ let extractState = null;
 async function parseDoc(id) {
   const meta = store.document(id);
   if (!meta) return;
-  if (!ai.hasApiKey()) { toast('Сначала добавьте AI-ключ (Диагностика)'); return; }
-  if (!store.settings.aiConsent) { toast('Включите согласие на AI (AI-аналитика)'); return; }
-  toast('Распознаю документ…');
+  if (!ai.hasApiKey()) { toast('Сначала добавьте AI-ключ (вкладка AI)'); return; }
+  if (!store.settings.aiConsent) { toast('Включите согласие на вкладке AI'); return; }
+  store.updateDocument(id, { busy: true, error: null });
   try {
     const blob = await getDoc(id);
     if (!blob) throw new Error('файл не найден');
-    const base64 = await blobToBase64(blob);
-    const data = await ai.extractDocument({ base64, mediaType: meta.mediaType, model: store.settings.aiModelExtract });
+    // Фото уменьшаем (для текста берём сторону побольше), PDF шлём как есть.
+    const isPdf = meta.mediaType === 'application/pdf';
+    const prepared = isPdf
+      ? { base64: await blobToBase64(blob), mediaType: 'application/pdf' }
+      : await imageToJpegBase64(blob, 2000, 0.85);
+    const { base64, mediaType } = prepared;
+    const data = await ai.extractDocument({ base64, mediaType, model: store.settings.aiModelExtract });
+    store.updateDocument(id, { busy: false });
     extractState = { docId: id, docName: meta.name, data };
     openSheet(renderExtractPreview);
   } catch (e) {
-    toast('Ошибка распознавания: ' + (e?.message || 'неизвестно'));
+    store.updateDocument(id, { busy: false, error: e?.message || 'не удалось распознать' });
   }
 }
 

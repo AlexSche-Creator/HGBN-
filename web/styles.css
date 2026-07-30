@@ -383,6 +383,14 @@ table.report tr.hi td { background: color-mix(in srgb, var(--accent) 12%, transp
 }
 .toggle.dim { opacity: .4; pointer-events: none; }
 
+/* Индикатор долгой операции (распознавание фото) */
+.spinner {
+  width: 16px; height: 16px; border-radius: 50%; display: inline-block;
+  border: 2px solid currentColor; border-top-color: transparent;
+  animation: spin .8s linear infinite; vertical-align: -3px; margin-right: 6px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* Вечерняя проводка: группы маркеров и выбор настроения */
 .mgroup { border-top: 1px solid var(--separator); padding-top: 8px; margin-top: 8px; }
 .mgroup:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
