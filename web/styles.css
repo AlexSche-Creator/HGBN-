@@ -270,24 +270,33 @@ svg.ic.lg { width: 28px; height: 28px; }
   display: flex; align-items: flex-end; justify-content: center;
   animation: fade .15s ease;
 }
+/* Лист: закреплённая шапка + прокручиваемое тело. Ручку и крестик нельзя
+   «пролистать», поэтому отменить можно на любом этапе заполнения. */
 .sheet {
   background: var(--bg); width: 100%; max-width: 640px;
-  max-height: 92dvh; overflow-y: auto;
+  max-height: 92dvh; display: flex; flex-direction: column;
   border-radius: 22px 22px 0 0;
-  padding: 8px var(--pad) calc(24px + var(--safe-bottom));
   animation: slideup .22s ease;
 }
-.sheet-grab { padding: 4px 0 8px; cursor: grab; touch-action: none; }
+#sheet-body {
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 4px var(--pad) calc(24px + var(--safe-bottom));
+}
+.sheet-grab {
+  flex: 0 0 auto; position: relative; padding: 10px 0 10px;
+  cursor: grab; touch-action: none;
+  border-bottom: 1px solid var(--separator); border-radius: 22px 22px 0 0;
+  background: var(--bg);
+}
 .sheet-grab:active { cursor: grabbing; }
-.sheet-handle { width: 40px; height: 5px; border-radius: 3px; background: var(--separator); margin: 8px auto 4px; }
+.sheet-handle { width: 44px; height: 5px; border-radius: 3px; background: var(--separator); margin: 0 auto; }
 .sheet-close {
-  position: absolute; top: 12px; right: 14px; z-index: 2;
-  width: 32px; height: 32px; border-radius: 50%; border: none;
+  position: absolute; top: 4px; right: 10px;
+  width: 34px; height: 34px; border-radius: 50%; border: none;
   background: var(--secondary-bg); color: var(--text-secondary);
   display: grid; place-items: center; cursor: pointer;
 }
 .sheet-close:active { opacity: .7; }
-.sheet { position: relative; }
 
 /* Симметричные карточки запуска (напряжение / тревога) */
 .capture-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }

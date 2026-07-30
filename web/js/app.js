@@ -801,6 +801,7 @@ function bpSection() {
         <div class="muted" style="font-size:13px">${new Date(latest.dateTime).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}${latest.context ? ` · ${esc(bpContextTitle(latest.context))}` : ''}</div>
       ` : '<div class="muted">Пока нет измерений давления.</div>'}
       <button class="btn-primary" data-action="open-bp">${icon('plus')} Записать давление</button>
+      <button class="btn-secondary" data-action="bp-from-photo">${icon('camera')} Снять с фото тонометра</button>
     </div>
     ${bpPoints.length > 1 ? `<div class="card">
         <div class="row between"><div class="section-header">Динамика</div>
@@ -1555,10 +1556,14 @@ let sheetRenderer = null;
 let sheetCtx = null;
 function openSheet(renderer, ctx = null) {
   sheetRenderer = renderer; sheetCtx = ctx;
+  // Шапка листа закреплена: ручка и крестик остаются доступны, даже когда
+  // содержимое пролистано вниз и форма наполовину заполнена.
   sheetRoot.innerHTML = `<div class="sheet-backdrop" data-action="backdrop">
     <div class="sheet">
-      <div class="sheet-grab"><div class="sheet-handle"></div></div>
-      <button class="sheet-close" data-action="close-sheet" aria-label="Закрыть">${icon('close', 'sm')}</button>
+      <div class="sheet-grab">
+        <div class="sheet-handle"></div>
+        <button class="sheet-close" data-action="close-sheet" aria-label="Закрыть, не сохраняя">${icon('close', 'sm')}</button>
+      </div>
       <div id="sheet-body"></div>
     </div></div>`;
   renderSheet();
@@ -1584,7 +1589,7 @@ function attachSwipeToClose() {
     if (dy > 90) { closeSheet(); } else { sheet.style.transform = ''; }
     y0 = null;
   };
-  // Тянуть можно за «ручку» вверху — не мешает прокрутке содержимого.
+  // Тянуть можно за «ручку» вверху — она закреплена и доступна всегда.
   grab.addEventListener('touchstart', start, { passive: true });
   grab.addEventListener('touchmove', move, { passive: false });
   grab.addEventListener('touchend', end);
@@ -1594,6 +1599,21 @@ function attachSwipeToClose() {
     const mu = () => { end(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); };
     document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu);
   });
+
+  // И за само содержимое, когда оно прокручено в самый верх — привычный жест.
+  const body = sheetRoot.querySelector('#sheet-body');
+  if (!body) return;
+  let armed = false;
+  body.addEventListener('touchstart', (e) => {
+    armed = body.scrollTop <= 0 && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+    if (armed) start(e);
+  }, { passive: true });
+  body.addEventListener('touchmove', (e) => {
+    if (!armed) return;
+    if (body.scrollTop > 0) { armed = false; sheet.style.transform = ''; return; }
+    move(e);
+  }, { passive: false });
+  body.addEventListener('touchend', () => { if (armed) { end(); armed = false; } });
 }
 function renderSheet() {
   const body = $('#sheet-body');
@@ -1657,6 +1677,8 @@ document.addEventListener('click', (e) => {
     // --- Документы ---
     'pick-doc': () => { const inp = $('#doc-file'); if (inp) { inp.value = ''; inp.click(); } },
     'pick-bp-photo': () => { const inp = $('#bp-photo'); if (inp) { inp.value = ''; inp.click(); } },
+    // С вкладки «Ввод»: открыть пустую форму давления и сразу спросить фото.
+    'bp-from-photo': () => { openBPSheet(null); const inp = $('#bp-photo'); if (inp) { inp.value = ''; inp.click(); } },
     'parse-doc': () => parseDoc(t.dataset.id),
     'del-doc': () => { if (confirm('Удалить документ?')) { deleteDoc(t.dataset.id).catch(() => {}); store.deleteDocument(t.dataset.id); } },
     'view-doc': async () => {
